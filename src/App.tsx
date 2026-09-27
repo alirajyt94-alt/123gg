@@ -42,7 +42,10 @@ import {
   Clock,
   ShieldCheck,
   Palette,
-  Wifi
+  Wifi,
+  Package,
+  Plus,
+  Folder
 } from 'lucide-react';
 
 interface BotConfig {
@@ -194,6 +197,7 @@ export default function App() {
   // Command Simulator State
   const [simCommand, setSimCommand] = useState('!play blinding lights');
   const [simOutput, setSimOutput] = useState<any>(null);
+  const [commandsTabMode, setCommandsTabMode] = useState<'terminal' | 'packages' | 'simulator'>('terminal');
 
   // Bot & Guild Config State
   const [botConfig, setBotConfig] = useState<BotConfig>({
@@ -216,6 +220,36 @@ export default function App() {
   const [diagnostics, setDiagnostics] = useState<DiagnosticsData | null>(null);
   const [isRunningBenchmark, setIsRunningBenchmark] = useState(false);
   const [configSection, setConfigSection] = useState<'audio' | 'voice' | 'rules'>('audio');
+
+  // Interactive Console & Terminal State
+  const [dashboardConsoleTab, setDashboardConsoleTab] = useState<'terminal' | 'packages' | 'logs'>('terminal');
+  const [terminalInput, setTerminalInput] = useState('');
+  const [terminalEntries, setTerminalEntries] = useState<Array<{ id: string; type: 'cmd' | 'output' | 'error' | 'info'; text: string; timestamp: string }>>([
+    {
+      id: 'welcome-1',
+      type: 'info',
+      text: 'Groove Music Terminal & Package Manager initialized.\nType "help" for a list of commands, run any bash/bot command, or install packages directly.',
+      timestamp: new Date().toLocaleTimeString()
+    }
+  ]);
+  const [isExecutingCmd, setIsExecutingCmd] = useState(false);
+  const [cmdHistory, setCmdHistory] = useState<string[]>([]);
+  const [historyIdx, setHistoryIdx] = useState<number>(-1);
+  const [consoleCwd, setConsoleCwd] = useState<'bot' | 'root'>('bot');
+
+  // Package Management ("Install My Things") State
+  const [packagesData, setPackagesData] = useState<{
+    botDependencies: Record<string, string>;
+    rootDependencies: Record<string, string>;
+    devDependencies: Record<string, string>;
+  } | null>(null);
+  const [isLoadingPackages, setIsLoadingPackages] = useState(false);
+  const [customPkgName, setCustomPkgName] = useState('');
+  const [pkgTarget, setPkgTarget] = useState<'bot' | 'root'>('bot');
+  const [isInstallingPkg, setIsInstallingPkg] = useState(false);
+  const [pkgActionFeedback, setPkgActionFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const terminalEndRef = useRef<HTMLDivElement | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -297,6 +331,179 @@ export default function App() {
     } catch {}
   };
 
+  const fetchPackagesList = async () => {
+    setIsLoadingPackages(true);
+    try {
+      const res = await fetch('/api/packages/list');
+      if (res.ok) {
+        const data = await res.json();
+        setPackagesData(data);
+      }
+    } catch {} finally {
+      setIsLoadingPackages(false);
+    }
+  };
+
+  const handleExecuteConsole = async (overrideCmd?: string) => {
+    const cmdToRun = overrideCmd !== undefined ? overrideCmd : terminalInput;
+    if (!cmdToRun || !cmdToRun.trim()) return;
+
+    const trimmed = cmdToRun.trim();
+    if (trimmed !== 'clear' && trimmed !== 'cls') {
+      setCmdHistory((prev) => [trimmed, ...prev.filter((c) => c !== trimmed)].slice(0, 50));
+      setHistoryIdx(-1);
+    }
+
+    const cmdEntryId = 'cmd-' + Date.now();
+    setTerminalEntries((prev) => [
+      ...prev,
+      {
+        id: cmdEntryId,
+        type: 'cmd',
+        text: trimmed,
+        timestamp: new Date().toLocaleTimeString()
+      }
+    ]);
+    setTerminalInput('');
+    setIsExecutingCmd(true);
+
+    try {
+      const res = await fetch('/api/console/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: trimmed, cwd: consoleCwd })
+      });
+      const data = await res.json();
+
+      if (data.isClear) {
+        setTerminalEntries([]);
+      } else {
+        setTerminalEntries((prev) => [
+          ...prev,
+          {
+            id: 'res-' + Date.now(),
+            type: data.success ? 'output' : 'error',
+            text: data.output || '(No output produced)',
+            timestamp: new Date().toLocaleTimeString()
+          }
+        ]);
+      }
+
+      if (/^npm\s+(install|i|uninstall|rm)\b/i.test(trimmed)) {
+        fetchPackagesList();
+      }
+      if (/^bot\s+/i.test(trimmed)) {
+        fetchStatus();
+      }
+      fetchLogs();
+    } catch (err: any) {
+      setTerminalEntries((prev) => [
+        ...prev,
+        {
+          id: 'err-' + Date.now(),
+          type: 'error',
+          text: `Command execution failed: ${err.message}`,
+          timestamp: new Date().toLocaleTimeString()
+        }
+      ]);
+    } finally {
+      setIsExecutingCmd(false);
+      setTimeout(() => {
+        terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 50);
+    }
+  };
+
+  const handleInstallPackage = async (packageName?: string) => {
+    const pkg = packageName || customPkgName;
+    if (!pkg || !pkg.trim()) return;
+
+    const trimmed = pkg.trim();
+    setIsInstallingPkg(true);
+    setPkgActionFeedback(null);
+
+    setTerminalEntries((prev) => [
+      ...prev,
+      {
+        id: 'pkg-start-' + Date.now(),
+        type: 'cmd',
+        text: `npm install in /${pkgTarget}: ${trimmed}`,
+        timestamp: new Date().toLocaleTimeString()
+      }
+    ]);
+
+    try {
+      const res = await fetch('/api/packages/install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ packageName: trimmed, target: pkgTarget })
+      });
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        setPkgActionFeedback({ type: 'success', message: data.message });
+        setCustomPkgName('');
+        setTerminalEntries((prev) => [
+          ...prev,
+          {
+            id: 'pkg-ok-' + Date.now(),
+            type: 'output',
+            text: `✓ ${data.message}\n${data.output || ''}`,
+            timestamp: new Date().toLocaleTimeString()
+          }
+        ]);
+        fetchPackagesList();
+      } else {
+        setPkgActionFeedback({ type: 'error', message: data.error || 'Installation failed.' });
+        setTerminalEntries((prev) => [
+          ...prev,
+          {
+            id: 'pkg-fail-' + Date.now(),
+            type: 'error',
+            text: `❌ Installation failed: ${data.error || 'Unknown error'}\n${data.output || ''}`,
+            timestamp: new Date().toLocaleTimeString()
+          }
+        ]);
+      }
+      fetchLogs();
+    } catch (err: any) {
+      setPkgActionFeedback({ type: 'error', message: err.message });
+    } finally {
+      setIsInstallingPkg(false);
+      setTimeout(() => setPkgActionFeedback(null), 4000);
+      setTimeout(() => {
+        terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 50);
+    }
+  };
+
+  const handleUninstallPackage = async (pkgName: string) => {
+    if (!confirm(`Are you sure you want to uninstall ${pkgName} from bot?`)) return;
+
+    try {
+      const res = await fetch('/api/packages/uninstall', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ packageName: pkgName, target: 'bot' })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setTerminalEntries((prev) => [
+          ...prev,
+          {
+            id: 'pkg-uninst-' + Date.now(),
+            type: 'output',
+            text: `✓ Successfully uninstalled ${pkgName}`,
+            timestamp: new Date().toLocaleTimeString()
+          }
+        ]);
+        fetchPackagesList();
+      }
+    } catch (err: any) {
+      alert(`Failed to uninstall: ${err.message}`);
+    }
+  };
+
   const fetchFiles = async () => {
     try {
       const res = await fetch('/api/bot/files');
@@ -322,6 +529,7 @@ export default function App() {
     fetchStatus();
     fetchBotConfig();
     fetchLogs();
+    fetchPackagesList();
     fetchFiles();
     fetchFileContent('src/structures/YtdlpFFmpegEngine.js');
 
@@ -630,7 +838,7 @@ export default function App() {
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
               }`}
             >
-              <Terminal className="w-3.5 h-3.5" /> Commands Simulator
+              <Terminal className="w-3.5 h-3.5" /> Console & Terminal
             </button>
             <button
               onClick={() => setActiveTab('code')}
@@ -1218,42 +1426,418 @@ export default function App() {
                   )}
                 </div>
 
-                {/* Live Console / Logs */}
-                <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-slate-300">
-                      <Terminal className="w-4 h-4 text-indigo-400" /> Bot & Engine Activity Log
+                {/* Interactive Console & "Install My Things" Package Manager */}
+                <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 space-y-4">
+                  {/* Console Header & Sub-Tabs */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-indigo-600/20 text-indigo-400 flex items-center justify-center">
+                        <Terminal className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="font-semibold text-sm text-white flex items-center gap-2">
+                          Interactive Developer Console & Package Manager
+                        </div>
+                        <div className="text-[11px] text-slate-400">
+                          Execute shell and bot commands directly from the dashboard or install custom packages.
+                        </div>
+                      </div>
                     </div>
-                    <button
-                      onClick={fetchLogs}
-                      className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1"
-                    >
-                      <RefreshCw className="w-3 h-3" /> Refresh
-                    </button>
+
+                    {/* Console Tab Selector */}
+                    <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+                      <button
+                        onClick={() => setDashboardConsoleTab('terminal')}
+                        className={`px-3 py-1 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+                          dashboardConsoleTab === 'terminal'
+                            ? 'bg-indigo-600 text-white shadow-sm'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <Terminal className="w-3.5 h-3.5" />
+                        Live Terminal
+                      </button>
+                      <button
+                        onClick={() => setDashboardConsoleTab('packages')}
+                        className={`px-3 py-1 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+                          dashboardConsoleTab === 'packages'
+                            ? 'bg-indigo-600 text-white shadow-sm'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <Package className="w-3.5 h-3.5" />
+                        Install My Things
+                      </button>
+                      <button
+                        onClick={() => setDashboardConsoleTab('logs')}
+                        className={`px-3 py-1 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+                          dashboardConsoleTab === 'logs'
+                            ? 'bg-indigo-600 text-white shadow-sm'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <Activity className="w-3.5 h-3.5" />
+                        Logs ({logs.length})
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="bg-slate-950 rounded-xl p-3 h-48 overflow-y-auto font-mono text-[11px] space-y-1 border border-slate-850">
-                    {logs.length === 0 ? (
-                      <div className="text-slate-600 italic">No logs recorded yet.</div>
-                    ) : (
-                      logs.map((log, index) => (
-                        <div key={index} className="flex items-start gap-2">
-                          <span className="text-slate-600 select-none">[{log.timestamp}]</span>
-                          <span
-                            className={
-                              log.level === 'error'
-                                ? 'text-red-400 font-semibold'
-                                : log.level === 'warn'
-                                ? 'text-amber-400'
-                                : 'text-slate-300'
-                            }
+                  {/* SUB-TAB 1: LIVE INTERACTIVE TERMINAL */}
+                  {dashboardConsoleTab === 'terminal' && (
+                    <div className="space-y-3">
+                      {/* Terminal Toolbar: Working Directory, Quick Run Shortcuts, Clear */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] text-slate-400">Directory:</span>
+                          <button
+                            onClick={() => setConsoleCwd(consoleCwd === 'bot' ? 'root' : 'bot')}
+                            className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-indigo-300 font-mono text-[11px] hover:border-indigo-500 transition-all flex items-center gap-1.5"
+                            title="Click to toggle working directory"
                           >
-                            {log.message}
-                          </span>
+                            <Folder className="w-3 h-3 text-indigo-400" />
+                            {consoleCwd === 'bot' ? 'bot/ (Bot Codebase)' : '/ (Dashboard Root)'}
+                          </button>
                         </div>
-                      ))
-                    )}
-                  </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setTerminalEntries([])}
+                            className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1 px-2 py-0.5 rounded bg-slate-950 border border-slate-800"
+                          >
+                            <Trash2 className="w-3 h-3" /> Clear Screen
+                          </button>
+                          <button
+                            onClick={fetchLogs}
+                            className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1 px-2 py-0.5 rounded bg-slate-950 border border-slate-800"
+                          >
+                            <RefreshCw className="w-3 h-3" /> Refresh
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Quick Command Chips */}
+                      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                        <span className="text-slate-500 mr-1">Quick Run:</span>
+                        {[
+                          'help',
+                          'bot status',
+                          'npm list --depth=0',
+                          'yt-dlp --version',
+                          'ffmpeg -version',
+                          'node -v',
+                          'npm -v',
+                          'uptime',
+                          'ls -la'
+                        ].map((qcmd) => (
+                          <button
+                            key={qcmd}
+                            onClick={() => handleExecuteConsole(qcmd)}
+                            disabled={isExecutingCmd}
+                            className="px-2 py-0.5 rounded-md bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 font-mono transition-all hover:border-slate-700 disabled:opacity-50"
+                          >
+                            {qcmd}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Terminal Output Window */}
+                      <div className="bg-slate-950 rounded-xl p-4 h-64 overflow-y-auto font-mono text-xs space-y-2 border border-slate-850 shadow-inner">
+                        {terminalEntries.map((entry) => (
+                          <div key={entry.id} className="space-y-0.5">
+                            {entry.type === 'cmd' ? (
+                              <div className="flex items-center gap-2 text-indigo-400 font-semibold">
+                                <span className="text-emerald-400 select-none">groove-bot@studio:{consoleCwd === 'bot' ? '~/bot' : '~'}$</span>
+                                <span className="text-slate-100">{entry.text}</span>
+                                <span className="text-[10px] text-slate-600 select-none ml-auto font-normal">[{entry.timestamp}]</span>
+                              </div>
+                            ) : entry.type === 'error' ? (
+                              <div className="text-red-400 whitespace-pre-wrap pl-4 border-l border-red-500/30">
+                                {entry.text}
+                              </div>
+                            ) : entry.type === 'info' ? (
+                              <div className="text-emerald-400/90 whitespace-pre-wrap pl-4 border-l border-emerald-500/30">
+                                {entry.text}
+                              </div>
+                            ) : (
+                              <div className="text-slate-300 whitespace-pre-wrap pl-4 border-l border-slate-800 leading-relaxed">
+                                {entry.text}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        {isExecutingCmd && (
+                          <div className="flex items-center gap-2 text-slate-400 text-xs italic pl-4">
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                            <span>Executing command...</span>
+                          </div>
+                        )}
+                        <div ref={terminalEndRef} />
+                      </div>
+
+                      {/* Terminal Command Input Prompt */}
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          handleExecuteConsole();
+                        }}
+                        className="flex gap-2"
+                      >
+                        <div className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 flex items-center gap-2 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500">
+                          <span className="text-emerald-400 font-mono text-xs select-none">groove-bot:~$</span>
+                          <input
+                            type="text"
+                            value={terminalInput}
+                            onChange={(e) => setTerminalInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'ArrowUp') {
+                                e.preventDefault();
+                                if (cmdHistory.length > 0) {
+                                  const nextIdx = Math.min(historyIdx + 1, cmdHistory.length - 1);
+                                  setHistoryIdx(nextIdx);
+                                  setTerminalInput(cmdHistory[nextIdx]);
+                                }
+                              } else if (e.key === 'ArrowDown') {
+                                e.preventDefault();
+                                if (historyIdx > 0) {
+                                  const prevIdx = historyIdx - 1;
+                                  setHistoryIdx(prevIdx);
+                                  setTerminalInput(cmdHistory[prevIdx]);
+                                } else if (historyIdx === 0) {
+                                  setHistoryIdx(-1);
+                                  setTerminalInput('');
+                                }
+                              }
+                            }}
+                            placeholder="Type any command (e.g. npm install axios, bot status, yt-dlp -U, node -v, help)..."
+                            className="flex-1 bg-transparent text-xs font-mono text-slate-100 placeholder-slate-600 focus:outline-none"
+                            disabled={isExecutingCmd}
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          disabled={isExecutingCmd || !terminalInput.trim()}
+                          className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs rounded-xl shadow-lg shadow-indigo-600/30 flex items-center gap-1.5 transition-all disabled:opacity-50"
+                        >
+                          {isExecutingCmd ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                          Run Command
+                        </button>
+                      </form>
+                    </div>
+                  )}
+
+                  {/* SUB-TAB 2: "INSTALL MY THINGS" PACKAGE CENTER */}
+                  {dashboardConsoleTab === 'packages' && (
+                    <div className="space-y-4">
+                      {/* Package Install Input & Target */}
+                      <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-850 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                            <Plus className="w-4 h-4 text-indigo-400" />
+                            Install Any NPM Package
+                          </label>
+                          <div className="flex items-center gap-1.5 text-xs">
+                            <span className="text-slate-500 text-[11px]">Install to:</span>
+                            <button
+                              onClick={() => setPkgTarget('bot')}
+                              className={`px-2 py-0.5 rounded text-[11px] font-mono transition-all ${
+                                pkgTarget === 'bot'
+                                  ? 'bg-indigo-600 text-white font-medium'
+                                  : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+                              }`}
+                            >
+                              bot/ (Recommended)
+                            </button>
+                            <button
+                              onClick={() => setPkgTarget('root')}
+                              className={`px-2 py-0.5 rounded text-[11px] font-mono transition-all ${
+                                pkgTarget === 'root'
+                                  ? 'bg-indigo-600 text-white font-medium'
+                                  : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+                              }`}
+                            >
+                              root (/)
+                            </button>
+                          </div>
+                        </div>
+
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            handleInstallPackage();
+                          }}
+                          className="flex gap-2"
+                        >
+                          <div className="relative flex-1">
+                            <Package className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                            <input
+                              type="text"
+                              value={customPkgName}
+                              onChange={(e) => setCustomPkgName(e.target.value)}
+                              placeholder="e.g. lyrics-finder, @discordjs/opus, axios, soundcloud-downloader, chalk..."
+                              className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-10 pr-4 py-2 text-xs font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                            />
+                          </div>
+                          <button
+                            type="submit"
+                            disabled={isInstallingPkg || !customPkgName.trim()}
+                            className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs rounded-xl shadow-lg shadow-emerald-600/30 flex items-center gap-1.5 transition-all disabled:opacity-50"
+                          >
+                            {isInstallingPkg ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                            Install Package
+                          </button>
+                        </form>
+
+                        {pkgActionFeedback && (
+                          <div
+                            className={`p-2.5 rounded-lg text-xs flex items-center gap-2 ${
+                              pkgActionFeedback.type === 'success'
+                                ? 'bg-emerald-950/40 border border-emerald-800 text-emerald-300'
+                                : 'bg-red-950/40 border border-red-800 text-red-300'
+                            }`}
+                          >
+                            {pkgActionFeedback.type === 'success' ? (
+                              <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                            ) : (
+                              <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
+                            )}
+                            <span>{pkgActionFeedback.message}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 1-Click Popular Bot Audio & Utilities Packages */}
+                      <div className="space-y-2">
+                        <div className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                          Popular Music Bot Packages (1-Click Install)
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                          {[
+                            { name: '@discordjs/opus', desc: 'Fast native Opus audio encoder', category: 'Audio' },
+                            { name: 'sodium-native', desc: 'Hardware-accelerated crypto encryption', category: 'Voice' },
+                            { name: 'lyrics-finder', desc: 'Secondary track lyrics searcher', category: 'Lyrics' },
+                            { name: 'axios', desc: 'Promise-based HTTP request client', category: 'Utility' },
+                            { name: 'spotify-url-info', desc: 'Spotify track metadata resolver', category: 'Music' },
+                            { name: 'soundcloud-downloader', desc: 'SoundCloud direct stream audio parser', category: 'Audio' },
+                            { name: 'dotenv', desc: 'Zero-dependency env configuration', category: 'Config' },
+                            { name: 'chalk', desc: 'Terminal string color styling', category: 'Console' }
+                          ].map((pkg) => {
+                            const isInstalled = Boolean(
+                              packagesData?.botDependencies && packagesData.botDependencies[pkg.name]
+                            );
+                            return (
+                              <div
+                                key={pkg.name}
+                                className="p-3 rounded-xl bg-slate-950/60 border border-slate-850 hover:border-slate-700 transition-all flex flex-col justify-between space-y-2"
+                              >
+                                <div>
+                                  <div className="flex items-center justify-between gap-1">
+                                    <span className="font-mono text-xs font-semibold text-slate-200 truncate">{pkg.name}</span>
+                                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400">{pkg.category}</span>
+                                  </div>
+                                  <p className="text-[11px] text-slate-500 mt-1 line-clamp-2">{pkg.desc}</p>
+                                </div>
+                                <button
+                                  onClick={() => handleInstallPackage(pkg.name)}
+                                  disabled={isInstallingPkg}
+                                  className={`w-full py-1 px-2 rounded-lg text-xs font-medium flex items-center justify-center gap-1 transition-all ${
+                                    isInstalled
+                                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                      : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                                  }`}
+                                >
+                                  {isInstalled ? <Check className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+                                  {isInstalled ? 'Installed' : 'Install'}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Currently Installed Packages List in Bot */}
+                      <div className="space-y-2 pt-2">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-semibold text-slate-300 flex items-center gap-1.5">
+                            <Folder className="w-3.5 h-3.5 text-indigo-400" />
+                            Installed in /bot (bot/package.json)
+                          </span>
+                          <button
+                            onClick={fetchPackagesList}
+                            disabled={isLoadingPackages}
+                            className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1"
+                          >
+                            <RefreshCw className={`w-3 h-3 ${isLoadingPackages ? 'animate-spin' : ''}`} /> Refresh
+                          </button>
+                        </div>
+
+                        {packagesData?.botDependencies && Object.keys(packagesData.botDependencies).length > 0 ? (
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                            {Object.entries(packagesData.botDependencies).map(([name, version]) => (
+                              <div
+                                key={name}
+                                className="p-2.5 rounded-xl bg-slate-950 border border-slate-850 flex items-center justify-between text-xs"
+                              >
+                                <div className="truncate mr-2">
+                                  <div className="font-mono text-slate-200 truncate font-medium">{name}</div>
+                                  <div className="font-mono text-[10px] text-slate-500">{version}</div>
+                                </div>
+                                <button
+                                  onClick={() => handleUninstallPackage(name)}
+                                  className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-950/20 transition-all flex-shrink-0"
+                                  title={`Uninstall ${name}`}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-center py-6 text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl">
+                            Loading package dependencies...
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* SUB-TAB 3: ACTIVITY LOG STREAM */}
+                  {dashboardConsoleTab === 'logs' && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs text-slate-400">
+                        <span>Real-time bot runtime and audio pipeline log events</span>
+                        <button
+                          onClick={fetchLogs}
+                          className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1"
+                        >
+                          <RefreshCw className="w-3 h-3" /> Refresh
+                        </button>
+                      </div>
+
+                      <div className="bg-slate-950 rounded-xl p-3 h-64 overflow-y-auto font-mono text-[11px] space-y-1 border border-slate-850">
+                        {logs.length === 0 ? (
+                          <div className="text-slate-600 italic">No logs recorded yet.</div>
+                        ) : (
+                          logs.map((log, index) => (
+                            <div key={index} className="flex items-start gap-2">
+                              <span className="text-slate-600 select-none">[{log.timestamp}]</span>
+                              <span
+                                className={
+                                  log.level === 'error'
+                                    ? 'text-red-400 font-semibold'
+                                    : log.level === 'warn'
+                                    ? 'text-amber-400'
+                                    : 'text-slate-300'
+                                }
+                              >
+                                {log.message}
+                              </span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1740,96 +2324,458 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 3: COMMANDS SIMULATOR */}
+        {/* TAB 3: CONSOLE, TERMINAL & COMMANDS */}
         {activeTab === 'commands' && (
           <div className="space-y-6">
-            {/* Top Interactive Prompt */}
-            <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-semibold flex items-center gap-2">
-                    <Terminal className="w-4 h-4 text-indigo-400" />
-                    Interactive Discord Command Simulator
-                  </h3>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    Test any Groove Music command and preview the bot's generated rich embeds in real time.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={simCommand}
-                  onChange={(e) => setSimCommand(e.target.value)}
-                  placeholder="e.g. !play blinding lights or !filter nightcore or !queue"
-                  className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs font-mono text-indigo-300 focus:outline-none focus:border-indigo-500"
-                />
-                <button
-                  onClick={handleSimulate}
-                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs rounded-xl shadow-lg shadow-indigo-600/30 flex items-center gap-2"
-                >
-                  <Zap className="w-4 h-4" /> Execute
-                </button>
-              </div>
-
-              {/* Quick Command Pills */}
-              <div className="flex flex-wrap gap-1.5 text-xs">
-                <span className="text-slate-500 self-center mr-1">Quick Run:</span>
-                {[
-                  '!play starboy',
-                  '!lyrics',
-                  '!lyrics bohemian rhapsody',
-                  '!filter nightcore',
-                  '!filter bassboost',
-                  '!queue',
-                  '!nowplaying',
-                  '!speed 1.5',
-                  '!volume 100',
-                  '!system',
-                  '!help'
-                ].map((cmd) => (
-                  <button
-                    key={cmd}
-                    onClick={() => {
-                      setSimCommand(cmd);
-                      setTimeout(handleSimulate, 50);
-                    }}
-                    className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-slate-300 hover:border-indigo-500 font-mono text-[11px] transition-all"
-                  >
-                    {cmd}
-                  </button>
-                ))}
-              </div>
+            {/* Top Mode Selector */}
+            <div className="flex bg-slate-900/80 p-1.5 rounded-2xl border border-slate-800 gap-1.5">
+              <button
+                onClick={() => setCommandsTabMode('terminal')}
+                className={`flex-1 py-2 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
+                  commandsTabMode === 'terminal'
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                }`}
+              >
+                <Terminal className="w-4 h-4" />
+                Live Shell & Bot Console
+              </button>
+              <button
+                onClick={() => setCommandsTabMode('packages')}
+                className={`flex-1 py-2 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
+                  commandsTabMode === 'packages'
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                }`}
+              >
+                <Package className="w-4 h-4" />
+                Install My Things (Package Center)
+              </button>
+              <button
+                onClick={() => setCommandsTabMode('simulator')}
+                className={`flex-1 py-2 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
+                  commandsTabMode === 'simulator'
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                }`}
+              >
+                <Zap className="w-4 h-4" />
+                Discord Command Embed Simulator
+              </button>
             </div>
 
-            {/* Simulated Discord Embed Window */}
-            {simOutput && (
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 max-w-xl mx-auto shadow-2xl">
-                <div className="text-[11px] text-slate-500 mb-2 font-mono flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400" /> Groove Music (Bot Response)
+            {/* MODE 1: LIVE SHELL & BOT CONSOLE */}
+            {commandsTabMode === 'terminal' && (
+              <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800 text-xs">
+                  <div className="flex items-center gap-2 font-semibold text-slate-200">
+                    <Terminal className="w-4 h-4 text-indigo-400" />
+                    Interactive Full-Screen Developer Terminal
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-slate-400">Target Dir:</span>
+                    <button
+                      onClick={() => setConsoleCwd(consoleCwd === 'bot' ? 'root' : 'bot')}
+                      className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-indigo-300 font-mono text-[11px] hover:border-indigo-500 transition-all flex items-center gap-1.5"
+                    >
+                      <Folder className="w-3 h-3 text-indigo-400" />
+                      {consoleCwd === 'bot' ? 'bot/ (Bot Codebase)' : '/ (Dashboard Root)'}
+                    </button>
+                    <button
+                      onClick={() => setTerminalEntries([])}
+                      className="text-[11px] text-slate-400 hover:text-slate-200 px-2 py-1 rounded bg-slate-950 border border-slate-800"
+                    >
+                      Clear Screen
+                    </button>
+                  </div>
                 </div>
-                <div
-                  className="border-l-4 rounded-r-xl bg-slate-950 p-4 space-y-3"
-                  style={{ borderLeftColor: simOutput.color || '#6366f1' }}
-                >
-                  {simOutput.title && (
-                    <div className="font-bold text-sm text-white">{simOutput.title}</div>
-                  )}
-                  {simOutput.description && (
-                    <div className="text-xs text-slate-300 whitespace-pre-line">{simOutput.description}</div>
-                  )}
-                  {simOutput.fields && (
-                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-850">
-                      {simOutput.fields.map((f: any, idx: number) => (
-                        <div key={idx} className="text-xs">
-                          <div className="text-slate-500 text-[11px]">{f.name}</div>
-                          <div className="text-slate-200 font-medium">{f.value}</div>
+
+                {/* Quick Command Chips */}
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                  <span className="text-slate-500 mr-1 text-[11px]">Quick Run:</span>
+                  {[
+                    'help',
+                    'bot status',
+                    'npm list --depth=0',
+                    'yt-dlp --version',
+                    'ffmpeg -version',
+                    'node -v',
+                    'uptime',
+                    'ls -la'
+                  ].map((qcmd) => (
+                    <button
+                      key={qcmd}
+                      onClick={() => handleExecuteConsole(qcmd)}
+                      disabled={isExecutingCmd}
+                      className="px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 font-mono text-xs transition-all hover:border-slate-700 disabled:opacity-50"
+                    >
+                      {qcmd}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Terminal Output */}
+                <div className="bg-slate-950 rounded-xl p-5 h-96 overflow-y-auto font-mono text-xs space-y-2 border border-slate-850 shadow-inner">
+                  {terminalEntries.map((entry) => (
+                    <div key={entry.id} className="space-y-0.5">
+                      {entry.type === 'cmd' ? (
+                        <div className="flex items-center gap-2 text-indigo-400 font-semibold">
+                          <span className="text-emerald-400 select-none">groove-bot@studio:{consoleCwd === 'bot' ? '~/bot' : '~'}$</span>
+                          <span className="text-slate-100">{entry.text}</span>
+                          <span className="text-[10px] text-slate-600 select-none ml-auto font-normal">[{entry.timestamp}]</span>
                         </div>
-                      ))}
+                      ) : entry.type === 'error' ? (
+                        <div className="text-red-400 whitespace-pre-wrap pl-4 border-l border-red-500/30">
+                          {entry.text}
+                        </div>
+                      ) : entry.type === 'info' ? (
+                        <div className="text-emerald-400/90 whitespace-pre-wrap pl-4 border-l border-emerald-500/30">
+                          {entry.text}
+                        </div>
+                      ) : (
+                        <div className="text-slate-300 whitespace-pre-wrap pl-4 border-l border-slate-800 leading-relaxed">
+                          {entry.text}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {isExecutingCmd && (
+                    <div className="flex items-center gap-2 text-slate-400 text-xs italic pl-4">
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                      <span>Executing command...</span>
+                    </div>
+                  )}
+                  <div ref={terminalEndRef} />
+                </div>
+
+                {/* Command Input Prompt */}
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleExecuteConsole();
+                  }}
+                  className="flex gap-2"
+                >
+                  <div className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 flex items-center gap-2 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500">
+                    <span className="text-emerald-400 font-mono text-xs select-none">groove-bot:~$</span>
+                    <input
+                      type="text"
+                      value={terminalInput}
+                      onChange={(e) => setTerminalInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'ArrowUp') {
+                          e.preventDefault();
+                          if (cmdHistory.length > 0) {
+                            const nextIdx = Math.min(historyIdx + 1, cmdHistory.length - 1);
+                            setHistoryIdx(nextIdx);
+                            setTerminalInput(cmdHistory[nextIdx]);
+                          }
+                        } else if (e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          if (historyIdx > 0) {
+                            const prevIdx = historyIdx - 1;
+                            setHistoryIdx(prevIdx);
+                            setTerminalInput(cmdHistory[prevIdx]);
+                          } else if (historyIdx === 0) {
+                            setHistoryIdx(-1);
+                            setTerminalInput('');
+                          }
+                        }
+                      }}
+                      placeholder="Type command (e.g. npm install axios, bot status, yt-dlp -U, node -v, help)..."
+                      className="flex-1 bg-transparent text-xs font-mono text-slate-100 placeholder-slate-600 focus:outline-none"
+                      disabled={isExecutingCmd}
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={isExecutingCmd || !terminalInput.trim()}
+                    className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl shadow-lg shadow-indigo-600/30 flex items-center gap-2 transition-all disabled:opacity-50"
+                  >
+                    {isExecutingCmd ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                    Run Command
+                  </button>
+                </form>
+              </div>
+            )}
+
+            {/* MODE 2: INSTALL MY THINGS PACKAGE CENTER */}
+            {commandsTabMode === 'packages' && (
+              <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 space-y-6">
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                    <Package className="w-4 h-4 text-indigo-400" />
+                    Package & Tool Management Center ("Install My Things")
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Easily install additional npm packages, audio utilities, lyrics libraries, and crypto encoders directly into your bot.
+                  </p>
+                </div>
+
+                {/* Custom Package Form */}
+                <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-850 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                      <Plus className="w-4 h-4 text-indigo-400" />
+                      Install NPM Package By Name
+                    </label>
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <span className="text-slate-500 text-[11px]">Install to:</span>
+                      <button
+                        onClick={() => setPkgTarget('bot')}
+                        className={`px-2 py-0.5 rounded text-[11px] font-mono transition-all ${
+                          pkgTarget === 'bot'
+                            ? 'bg-indigo-600 text-white font-medium'
+                            : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        bot/ (Recommended)
+                      </button>
+                      <button
+                        onClick={() => setPkgTarget('root')}
+                        className={`px-2 py-0.5 rounded text-[11px] font-mono transition-all ${
+                          pkgTarget === 'root'
+                            ? 'bg-indigo-600 text-white font-medium'
+                            : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        root (/)
+                      </button>
+                    </div>
+                  </div>
+
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      handleInstallPackage();
+                    }}
+                    className="flex gap-2"
+                  >
+                    <div className="relative flex-1">
+                      <Package className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                      <input
+                        type="text"
+                        value={customPkgName}
+                        onChange={(e) => setCustomPkgName(e.target.value)}
+                        placeholder="e.g. lyrics-finder, @discordjs/opus, axios, soundcloud-downloader, chalk..."
+                        className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-xs font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={isInstallingPkg || !customPkgName.trim()}
+                      className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-xl shadow-lg shadow-emerald-600/30 flex items-center gap-1.5 transition-all disabled:opacity-50"
+                    >
+                      {isInstallingPkg ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                      Install Package
+                    </button>
+                  </form>
+
+                  {pkgActionFeedback && (
+                    <div
+                      className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
+                        pkgActionFeedback.type === 'success'
+                          ? 'bg-emerald-950/40 border border-emerald-800 text-emerald-300'
+                          : 'bg-red-950/40 border border-red-800 text-red-300'
+                      }`}
+                    >
+                      {pkgActionFeedback.type === 'success' ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
+                      )}
+                      <span>{pkgActionFeedback.message}</span>
                     </div>
                   )}
                 </div>
+
+                {/* Popular Packages Grid */}
+                <div className="space-y-3">
+                  <div className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    Essential Music Bot Packages (1-Click Install)
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                    {[
+                      { name: '@discordjs/opus', desc: 'Fast native Opus audio encoder', category: 'Audio' },
+                      { name: 'sodium-native', desc: 'Hardware crypto voice encryption', category: 'Voice' },
+                      { name: 'lyrics-finder', desc: 'Secondary track lyrics searcher', category: 'Lyrics' },
+                      { name: 'axios', desc: 'Promise-based HTTP request client', category: 'Utility' },
+                      { name: 'spotify-url-info', desc: 'Spotify track metadata resolver', category: 'Music' },
+                      { name: 'soundcloud-downloader', desc: 'SoundCloud direct stream audio parser', category: 'Audio' },
+                      { name: 'dotenv', desc: 'Zero-dependency env configuration', category: 'Config' },
+                      { name: 'chalk', desc: 'Terminal string color styling', category: 'Console' }
+                    ].map((pkg) => {
+                      const isInstalled = Boolean(
+                        packagesData?.botDependencies && packagesData.botDependencies[pkg.name]
+                      );
+                      return (
+                        <div
+                          key={pkg.name}
+                          className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-850 hover:border-slate-700 transition-all flex flex-col justify-between space-y-3"
+                        >
+                          <div>
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="font-mono text-xs font-semibold text-slate-200 truncate">{pkg.name}</span>
+                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400">{pkg.category}</span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 mt-1 line-clamp-2">{pkg.desc}</p>
+                          </div>
+                          <button
+                            onClick={() => handleInstallPackage(pkg.name)}
+                            disabled={isInstallingPkg}
+                            className={`w-full py-1.5 px-3 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 transition-all ${
+                              isInstalled
+                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                            }`}
+                          >
+                            {isInstalled ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                            {isInstalled ? 'Installed' : 'Install'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Installed Packages List in Bot */}
+                <div className="space-y-3 pt-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-slate-300 flex items-center gap-1.5">
+                      <Folder className="w-3.5 h-3.5 text-indigo-400" />
+                      Currently Installed Packages in Bot (bot/package.json)
+                    </span>
+                    <button
+                      onClick={fetchPackagesList}
+                      disabled={isLoadingPackages}
+                      className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isLoadingPackages ? 'animate-spin' : ''}`} /> Refresh
+                    </button>
+                  </div>
+
+                  {packagesData?.botDependencies && Object.keys(packagesData.botDependencies).length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                      {Object.entries(packagesData.botDependencies).map(([name, version]) => (
+                        <div
+                          key={name}
+                          className="p-3 rounded-xl bg-slate-950 border border-slate-850 flex items-center justify-between text-xs"
+                        >
+                          <div className="truncate mr-2">
+                            <div className="font-mono text-slate-200 truncate font-semibold">{name}</div>
+                            <div className="font-mono text-[10px] text-slate-500">{version}</div>
+                          </div>
+                          <button
+                            onClick={() => handleUninstallPackage(name)}
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-950/20 transition-all flex-shrink-0"
+                            title={`Uninstall ${name}`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl">
+                      Loading package dependencies...
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* MODE 3: DISCORD MUSIC COMMAND SIMULATOR */}
+            {commandsTabMode === 'simulator' && (
+              <div className="space-y-6">
+                <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold flex items-center gap-2">
+                        <Zap className="w-4 h-4 text-indigo-400" />
+                        Discord Command Embed Simulator
+                      </h3>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        Test any Groove Music command and preview the bot's generated rich embeds in real time.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={simCommand}
+                      onChange={(e) => setSimCommand(e.target.value)}
+                      placeholder="e.g. !play blinding lights or !filter nightcore or !queue"
+                      className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs font-mono text-indigo-300 focus:outline-none focus:border-indigo-500"
+                    />
+                    <button
+                      onClick={handleSimulate}
+                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs rounded-xl shadow-lg shadow-indigo-600/30 flex items-center gap-2"
+                    >
+                      <Zap className="w-4 h-4" /> Execute
+                    </button>
+                  </div>
+
+                  {/* Quick Command Pills */}
+                  <div className="flex flex-wrap gap-1.5 text-xs">
+                    <span className="text-slate-500 self-center mr-1">Quick Run:</span>
+                    {[
+                      '!play starboy',
+                      '!lyrics',
+                      '!lyrics bohemian rhapsody',
+                      '!filter nightcore',
+                      '!filter bassboost',
+                      '!queue',
+                      '!nowplaying',
+                      '!speed 1.5',
+                      '!volume 100',
+                      '!system',
+                      '!help'
+                    ].map((cmd) => (
+                      <button
+                        key={cmd}
+                        onClick={() => {
+                          setSimCommand(cmd);
+                          setTimeout(handleSimulate, 50);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-slate-300 hover:border-indigo-500 font-mono text-[11px] transition-all"
+                      >
+                        {cmd}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Simulated Discord Embed Window */}
+                {simOutput && (
+                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 max-w-xl mx-auto shadow-2xl">
+                    <div className="text-[11px] text-slate-500 mb-2 font-mono flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400" /> Groove Music (Bot Response)
+                    </div>
+                    <div
+                      className="border-l-4 rounded-r-xl bg-slate-950 p-4 space-y-3"
+                      style={{ borderLeftColor: simOutput.color || '#6366f1' }}
+                    >
+                      {simOutput.title && (
+                        <div className="font-bold text-sm text-white">{simOutput.title}</div>
+                      )}
+                      {simOutput.description && (
+                        <div className="text-xs text-slate-300 whitespace-pre-line">{simOutput.description}</div>
+                      )}
+                      {simOutput.fields && (
+                        <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-850">
+                          {simOutput.fields.map((f: any, idx: number) => (
+                            <div key={idx} className="text-xs">
+                              <div className="text-slate-500 text-[11px]">{f.name}</div>
+                              <div className="text-slate-200 font-medium">{f.value}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

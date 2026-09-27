@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express';
 import { createServer as createViteServer } from 'vite';
-import { spawn, execSync } from 'child_process';
+import { spawn, execSync, exec } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -382,7 +382,254 @@ app.post('/api/engine/benchmark', async (req: Request, res: Response) => {
   });
 });
 
-// 6. Bot Logs
+// 6. Interactive Developer Console & Package Installation
+app.post('/api/console/execute', async (req: Request, res: Response) => {
+  const { command, cwd = 'root' } = req.body;
+  if (!command || typeof command !== 'string') {
+    return res.status(400).json({ error: 'Command string is required.' });
+  }
+
+  const trimmed = command.trim();
+  if (!trimmed) {
+    return res.json({ success: true, output: '' });
+  }
+
+  addLog('info', `Console exec: $ ${trimmed}`);
+
+  // Built-in special commands
+  if (trimmed === 'clear' || trimmed === 'cls') {
+    return res.json({ success: true, command: trimmed, output: '__CLEAR__', isClear: true });
+  }
+
+  if (trimmed === 'help') {
+    const helpText = [
+      'Groove Music Bot Console - Available Commands & Guide',
+      '─────────────────────────────────────────────────────────────',
+      '📦 PACKAGE & DEPENDENCY MANAGEMENT:',
+      '  npm install <package>          Install package (e.g. npm install axios)',
+      '  npm install --prefix bot <pkg> Install package into bot directory',
+      '  npm uninstall <package>        Remove package',
+      '  npm list --depth=0             View installed dependencies',
+      '  yt-dlp -U                      Check/update yt-dlp binary',
+      '  ffmpeg -version                Check FFmpeg codecs & version',
+      '',
+      '🤖 BOT MANAGEMENT & SIMULATION:',
+      '  bot status                     Show current Discord connection & guilds',
+      '  bot start                      Launch Discord bot instance',
+      '  bot stop                       Gracefully stop Discord bot instance',
+      '  !play <query>                  Simulate music playback search',
+      '  !lyrics <song>                 Fetch lyrics via LRCLIB & yt-dlp metadata',
+      '  !filter <name>                 Test FFmpeg audio DSP filter',
+      '  !queue                         Show mock/active queue state',
+      '',
+      '💻 SYSTEM & RUNTIME COMMANDS:',
+      '  node -v / npm -v               Display Node.js & NPM versions',
+      '  ls -la                         List files in working directory',
+      '  pwd                            Print working directory path',
+      '  uptime                         System uptime & load statistics',
+      '  df -h                          Check disk storage allocation',
+      '  free -m                        Check memory usage',
+      '  clear                          Clear terminal screen',
+      '─────────────────────────────────────────────────────────────'
+    ].join('\n');
+    return res.json({ success: true, command: trimmed, output: helpText });
+  }
+
+  if (trimmed === 'bot status') {
+    const ytdlpVer = execSync('yt-dlp --version').toString().trim();
+    const statusText = [
+      `Bot Online: ${activeBot && activeBot.isReady() ? 'YES (Connected)' : 'NO (Standby)'}`,
+      `Bot Tag: ${activeBot?.user?.tag || 'Not Logged In'}`,
+      `Bot ID: ${activeBot?.user?.id || 'N/A'}`,
+      `Active Players: ${activeBot?.playerManager?.players?.size || 0}`,
+      `Guilds Joined: ${activeBot?.guilds?.cache?.size || 0}`,
+      `Prefix: "${activeBot?.prefix || botConfig.prefix}"`,
+      `Audio Engine: yt-dlp v${ytdlpVer} + FFmpeg Direct Stream`
+    ].join('\n');
+    return res.json({ success: true, command: trimmed, output: statusText });
+  }
+
+  if (trimmed === 'bot stop') {
+    if (!activeBot) {
+      return res.json({ success: true, command: trimmed, output: 'Bot is not currently running.' });
+    }
+    activeBot.playerManager.players.forEach((p) => p.destroy());
+    activeBot.destroy();
+    activeBot = null;
+    addLog('info', 'Discord bot stopped via console.');
+    return res.json({ success: true, command: trimmed, output: '✓ Discord bot instance successfully stopped.' });
+  }
+
+  if (trimmed === 'bot start') {
+    const token = process.env.DISCORD_TOKEN;
+    if (!token) {
+      return res.json({ success: false, command: trimmed, output: '❌ No Discord Bot Token found. Please enter your token in the Bot Controller panel or set DISCORD_TOKEN in .env.' });
+    }
+    if (activeBot && activeBot.isReady()) {
+      return res.json({ success: true, command: trimmed, output: `Bot is already running as ${activeBot.user?.tag}` });
+    }
+    try {
+      activeBot = new MusicClient();
+      activeBot.prefix = botConfig.prefix;
+      activeBot.config.token = token;
+      await activeBot.build();
+      return res.json({ success: true, command: trimmed, output: `✓ Discord bot started successfully as ${activeBot.user?.tag} (ID: ${activeBot.user?.id})` });
+    } catch (err: any) {
+      return res.json({ success: false, command: trimmed, output: `❌ Failed to start bot: ${err.message}` });
+    }
+  }
+
+  // Safety checks against destructive commands
+  const dangerousPatterns = [
+    /\brm\s+-[rf]{1,2}\s+(\/|\*)/i,
+    /\/dev\/(tcp|udp)/i,
+    /\bmkfifo\b/i,
+    /\b(nc|netcat)\b.*\s+-e\b/i,
+    /\|\s*bash\b/i,
+    /\|\s*sh\b/i,
+    /:(){ :\|:& };:/,
+    /\bdd\s+if=/i,
+    /\bshutdown\b/i,
+    /\breboot\b/i
+  ];
+
+  for (const pattern of dangerousPatterns) {
+    if (pattern.test(trimmed)) {
+      addLog('warn', `Blocked dangerous console command: ${trimmed}`);
+      return res.json({
+        success: false,
+        command: trimmed,
+        output: '⚠️ Command blocked by security policy for system stability.'
+      });
+    }
+  }
+
+  const targetDir = cwd === 'bot' ? path.join(process.cwd(), 'bot') : process.cwd();
+
+  // If command is npm install or npm i and no peer flag, add --legacy-peer-deps for seamless installs
+  let finalCmd = trimmed;
+  if (/^npm\s+(install|i|add)\b/i.test(trimmed) && !trimmed.includes('--legacy-peer-deps') && !trimmed.includes('--force')) {
+    finalCmd = `${trimmed} --legacy-peer-deps`;
+  }
+
+  exec(finalCmd, {
+    cwd: targetDir,
+    timeout: 90000,
+    maxBuffer: 5 * 1024 * 1024,
+    env: { ...process.env, PATH: process.env.PATH }
+  }, (error, stdout, stderr) => {
+    let output = '';
+    if (stdout) output += stdout;
+    if (stderr) {
+      if (output) output += '\n';
+      output += stderr;
+    }
+    if (error && !output) {
+      output = `Error: ${error.message}`;
+    }
+
+    if (process.env.DISCORD_TOKEN) {
+      output = output.split(process.env.DISCORD_TOKEN).join('[REDACTED_BOT_TOKEN]');
+    }
+
+    res.json({
+      success: !error || error.code === 0,
+      command: trimmed,
+      output: output || '(No output produced)',
+      exitCode: error ? error.code : 0
+    });
+  });
+});
+
+// Packages list endpoint
+app.get('/api/packages/list', (req: Request, res: Response) => {
+  try {
+    const rootPkgPath = path.join(process.cwd(), 'package.json');
+    const botPkgPath = path.join(process.cwd(), 'bot', 'package.json');
+
+    const rootPkg = JSON.parse(fs.readFileSync(rootPkgPath, 'utf-8'));
+    const botPkg = fs.existsSync(botPkgPath) ? JSON.parse(fs.readFileSync(botPkgPath, 'utf-8')) : {};
+
+    res.json({
+      botDependencies: botPkg.dependencies || {},
+      rootDependencies: rootPkg.dependencies || {},
+      devDependencies: rootPkg.devDependencies || {}
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// One-click package installer endpoint
+app.post('/api/packages/install', async (req: Request, res: Response) => {
+  const { packageName, target = 'bot', isDev = false } = req.body;
+  if (!packageName || typeof packageName !== 'string') {
+    return res.status(400).json({ error: 'Package name is required.' });
+  }
+
+  const cleanName = packageName.trim();
+  if (!/^(@[a-zA-Z0-9~._-]+\/)?[a-zA-Z0-9~._-]+(@[a-zA-Z0-9~._^><=-]+)?$/.test(cleanName)) {
+    return res.status(400).json({ error: 'Invalid package name format. Allowed: letters, numbers, @, /, -, .' });
+  }
+
+  const targetDir = target === 'bot' ? path.join(process.cwd(), 'bot') : process.cwd();
+  const installCmd = `npm install --legacy-peer-deps ${isDev ? '-D ' : ''}${cleanName}`;
+
+  addLog('info', `Installing package "${cleanName}" in ${target === 'bot' ? '/bot' : 'root'}...`);
+
+  exec(installCmd, {
+    cwd: targetDir,
+    timeout: 120000,
+    maxBuffer: 5 * 1024 * 1024
+  }, (error, stdout, stderr) => {
+    const output = (stdout || '') + (stderr ? '\n' + stderr : '');
+
+    if (error) {
+      addLog('error', `Failed to install ${cleanName}: ${error.message}`);
+      return res.status(500).json({
+        success: false,
+        error: error.message,
+        output
+      });
+    }
+
+    addLog('info', `Successfully installed package "${cleanName}".`);
+    res.json({
+      success: true,
+      message: `Package "${cleanName}" installed successfully!`,
+      output
+    });
+  });
+});
+
+// Package uninstall endpoint
+app.post('/api/packages/uninstall', async (req: Request, res: Response) => {
+  const { packageName, target = 'bot' } = req.body;
+  if (!packageName || typeof packageName !== 'string') {
+    return res.status(400).json({ error: 'Package name is required.' });
+  }
+
+  const cleanName = packageName.trim();
+  const targetDir = target === 'bot' ? path.join(process.cwd(), 'bot') : process.cwd();
+  const uninstallCmd = `npm uninstall ${cleanName}`;
+
+  addLog('info', `Uninstalling package "${cleanName}" from ${target === 'bot' ? '/bot' : 'root'}...`);
+
+  exec(uninstallCmd, {
+    cwd: targetDir,
+    timeout: 60000,
+    maxBuffer: 5 * 1024 * 1024
+  }, (error, stdout, stderr) => {
+    const output = (stdout || '') + (stderr ? '\n' + stderr : '');
+    if (error) {
+      return res.status(500).json({ success: false, error: error.message, output });
+    }
+    addLog('info', `Successfully uninstalled package "${cleanName}".`);
+    res.json({ success: true, message: `Package "${cleanName}" uninstalled successfully!`, output });
+  });
+});
+
+// 7. Bot Logs
 app.get('/api/bot/logs', (req: Request, res: Response) => {
   res.json({ logs: botLogs });
 });
