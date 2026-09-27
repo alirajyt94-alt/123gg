@@ -1,0 +1,2120 @@
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Music,
+  Play,
+  Pause,
+  SkipForward,
+  SkipBack,
+  Square,
+  Volume2,
+  VolumeX,
+  Repeat,
+  Shuffle,
+  Search,
+  Sliders,
+  Server,
+  Terminal,
+  Download,
+  Code,
+  BookOpen,
+  Cpu,
+  Activity,
+  Check,
+  Copy,
+  ExternalLink,
+  Layers,
+  Radio,
+  Sparkles,
+  Headphones,
+  Disc,
+  Trash2,
+  RefreshCw,
+  AlertCircle,
+  CheckCircle2,
+  FileCode,
+  ChevronRight,
+  Zap,
+  FileText,
+  Mic,
+  AlignLeft,
+  Settings,
+  Gauge,
+  Clock,
+  ShieldCheck,
+  Palette,
+  Wifi
+} from 'lucide-react';
+
+interface BotConfig {
+  prefix: string;
+  defaultVolume: number;
+  defaultFilter: string;
+  defaultSpeed: number;
+  stay247: boolean;
+  autoplay: boolean;
+  emptyChannelTimeout: number;
+  announceNowPlaying: boolean;
+  voteSkipPercentage: number;
+  maxQueueSize: number;
+  embedColor: string;
+  djOnlyMode: boolean;
+}
+
+interface ActiveSession {
+  guildId: string;
+  guildName: string;
+  voiceChannelId: string;
+  textChannelId: string;
+  isPlaying: boolean;
+  currentTrack?: {
+    title: string;
+    author: string;
+    durationFormatted: string;
+  } | null;
+  queueCount: number;
+  volume: number;
+  filter: string;
+  speed: number;
+  stay247: boolean;
+  autoplay: boolean;
+}
+
+interface DiagnosticsData {
+  timestamp: string;
+  totalDurationMs: number;
+  ytdlp: {
+    status: string;
+    version: string;
+    latencyMs: number;
+  };
+  ffmpeg: {
+    status: string;
+    version: string;
+    latencyMs: number;
+    transcodePipeline: string;
+  };
+}
+
+interface LyricsData {
+  title: string;
+  artist: string;
+  album?: string;
+  lyrics: string;
+  syncedLyrics?: string | null;
+  source: string;
+  isSynced?: boolean;
+}
+
+interface EngineStatus {
+  engine: {
+    type: string;
+    ytdlpVersion: string;
+    ffmpegVersion: string;
+    lavalinkRemoved: boolean;
+    audioFormats: string[];
+    filtersAvailable: string[];
+  };
+  system: {
+    platform: string;
+    uptimeSeconds: number;
+    memory: {
+      totalMb: number;
+      usedMb: number;
+      freeMb: number;
+      usagePercent: number;
+    };
+    cpuCount: number;
+  };
+  bot: {
+    online: boolean;
+    user: { id: string; tag: string; avatar: string | null } | null;
+    guildCount: number;
+    activeVoicePlayers: number;
+    ping: number;
+  };
+}
+
+interface Track {
+  id: string;
+  title: string;
+  author: string;
+  duration: number;
+  durationFormatted: string;
+  url: string;
+  thumbnail: string;
+  views?: number;
+}
+
+interface BotLog {
+  timestamp: string;
+  level: 'info' | 'warn' | 'error';
+  message: string;
+}
+
+interface FileItem {
+  path: string;
+  name: string;
+  isDir: boolean;
+}
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'studio' | 'commands' | 'code' | 'guide'>('dashboard');
+  const [status, setStatus] = useState<EngineStatus | null>(null);
+  const [logs, setLogs] = useState<BotLog[]>([]);
+  const [botToken, setBotToken] = useState('');
+  const [botPrefix, setBotPrefix] = useState('!');
+  const [isBotStarting, setIsBotStarting] = useState(false);
+
+  // Studio / Player State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<Track[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
+  const [queue, setQueue] = useState<Track[]>([]);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [selectedFilter, setSelectedFilter] = useState('clear');
+  const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
+  const [volume, setVolume] = useState(80);
+  const [isMuted, setIsMuted] = useState(false);
+  const [loopMode, setLoopMode] = useState<'off' | 'track' | 'queue'>('off');
+
+  // Lyrics State
+  const [lyricsData, setLyricsData] = useState<LyricsData | null>(null);
+  const [isLoadingLyrics, setIsLoadingLyrics] = useState(false);
+  const [showLyricsPanel, setShowLyricsPanel] = useState(false);
+  const [lyricsViewType, setLyricsViewType] = useState<'plain' | 'synced'>('plain');
+  const [copiedLyrics, setCopiedLyrics] = useState(false);
+
+  // Code Explorer State
+  const [fileList, setFileList] = useState<FileItem[]>([]);
+  const [selectedFile, setSelectedFile] = useState<string>('src/structures/YtdlpFFmpegEngine.js');
+  const [fileContent, setFileContent] = useState<string>('');
+  const [copiedCode, setCopiedCode] = useState(false);
+
+  // Command Simulator State
+  const [simCommand, setSimCommand] = useState('!play blinding lights');
+  const [simOutput, setSimOutput] = useState<any>(null);
+
+  // Bot & Guild Config State
+  const [botConfig, setBotConfig] = useState<BotConfig>({
+    prefix: '!',
+    defaultVolume: 80,
+    defaultFilter: 'clear',
+    defaultSpeed: 1.0,
+    stay247: false,
+    autoplay: true,
+    emptyChannelTimeout: 3,
+    announceNowPlaying: true,
+    voteSkipPercentage: 50,
+    maxQueueSize: 250,
+    embedColor: '#6366f1',
+    djOnlyMode: false
+  });
+  const [activeSessions, setActiveSessions] = useState<ActiveSession[]>([]);
+  const [isSavingConfig, setIsSavingConfig] = useState(false);
+  const [configSaveSuccess, setConfigSaveSuccess] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<DiagnosticsData | null>(null);
+  const [isRunningBenchmark, setIsRunningBenchmark] = useState(false);
+  const [configSection, setConfigSection] = useState<'audio' | 'voice' | 'rules'>('audio');
+
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+
+  // Fetch status periodically
+  const fetchStatus = async () => {
+    try {
+      const res = await fetch('/api/engine/status');
+      if (res.ok) {
+        const data = await res.json();
+        setStatus(data);
+      }
+    } catch {}
+  };
+
+  const fetchBotConfig = async () => {
+    try {
+      const res = await fetch('/api/bot/config');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.config) {
+          setBotConfig(data.config);
+          if (data.config.prefix) setBotPrefix(data.config.prefix);
+        }
+        if (data.activeSessions) {
+          setActiveSessions(data.activeSessions);
+        }
+      }
+    } catch {}
+  };
+
+  const handleSaveConfig = async (overrideUpdates?: Partial<BotConfig>) => {
+    setIsSavingConfig(true);
+    try {
+      const payload = overrideUpdates ? { ...botConfig, ...overrideUpdates } : botConfig;
+      const res = await fetch('/api/bot/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (res.ok && data.config) {
+        setBotConfig(data.config);
+        setConfigSaveSuccess(true);
+        setTimeout(() => setConfigSaveSuccess(false), 2500);
+        fetchLogs();
+      }
+    } catch (err: any) {
+      alert(`Failed to save config: ${err.message}`);
+    } finally {
+      setIsSavingConfig(false);
+    }
+  };
+
+  const handleRunBenchmark = async () => {
+    setIsRunningBenchmark(true);
+    try {
+      const res = await fetch('/api/engine/benchmark', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.diagnostics) {
+        setDiagnostics(data.diagnostics);
+        fetchLogs();
+      }
+    } catch (err: any) {
+      console.error('Benchmark failed:', err);
+    } finally {
+      setIsRunningBenchmark(false);
+    }
+  };
+
+  const fetchLogs = async () => {
+    try {
+      const res = await fetch('/api/bot/logs');
+      if (res.ok) {
+        const data = await res.json();
+        setLogs(data.logs || []);
+      }
+    } catch {}
+  };
+
+  const fetchFiles = async () => {
+    try {
+      const res = await fetch('/api/bot/files');
+      if (res.ok) {
+        const data = await res.json();
+        setFileList(data.files || []);
+      }
+    } catch {}
+  };
+
+  const fetchFileContent = async (filePath: string) => {
+    try {
+      const res = await fetch(`/api/bot/file-content?path=${encodeURIComponent(filePath)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setFileContent(data.content);
+        setSelectedFile(filePath);
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    fetchStatus();
+    fetchBotConfig();
+    fetchLogs();
+    fetchFiles();
+    fetchFileContent('src/structures/YtdlpFFmpegEngine.js');
+
+    const interval = setInterval(() => {
+      fetchStatus();
+      fetchBotConfig();
+      fetchLogs();
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // Handle Search
+  const handleSearch = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!searchQuery.trim()) return;
+
+    setIsSearching(true);
+    try {
+      const res = await fetch(`/api/music/search?q=${encodeURIComponent(searchQuery)}`);
+      const data = await res.json();
+      if (data.results) {
+        setSearchResults(data.results);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // Fetch Lyrics for Track
+  const fetchLyricsForTrack = async (title: string, artist: string = '', url: string = '') => {
+    setIsLoadingLyrics(true);
+    setShowLyricsPanel(true);
+    try {
+      const res = await fetch(`/api/music/lyrics?track=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}&url=${encodeURIComponent(url)}`);
+      const data = await res.json();
+      if (res.ok && data.lyrics) {
+        setLyricsData(data.lyrics);
+      } else {
+        setLyricsData({
+          title,
+          artist,
+          lyrics: data.error || 'No lyrics found for this track. Try searching with a specific title and artist.',
+          source: 'Not Found',
+          isSynced: false
+        });
+      }
+    } catch (err: any) {
+      setLyricsData({
+        title,
+        artist,
+        lyrics: `Error fetching lyrics: ${err.message}`,
+        source: 'Error',
+        isSynced: false
+      });
+    } finally {
+      setIsLoadingLyrics(false);
+    }
+  };
+
+  // Play Track in Studio
+  const playTrackInStudio = (track: Track) => {
+    setCurrentTrack(track);
+    setIsPlaying(true);
+    fetchLyricsForTrack(track.title, track.author, track.url);
+
+    if (audioRef.current) {
+      const streamUrl = `/api/music/stream?url=${encodeURIComponent(track.url)}&filter=${encodeURIComponent(selectedFilter)}&speed=${playbackSpeed}`;
+      audioRef.current.src = streamUrl;
+      audioRef.current.volume = isMuted ? 0 : volume / 100;
+      audioRef.current.play().catch(() => {});
+    }
+  };
+
+  // Toggle Filter in Studio
+  const handleFilterChange = (filterKey: string) => {
+    setSelectedFilter(filterKey);
+    if (currentTrack && audioRef.current) {
+      const streamUrl = `/api/music/stream?url=${encodeURIComponent(currentTrack.url)}&filter=${encodeURIComponent(filterKey)}&speed=${playbackSpeed}`;
+      audioRef.current.src = streamUrl;
+      audioRef.current.play().catch(() => {});
+    }
+  };
+
+  // Toggle Speed
+  const handleSpeedChange = (speedVal: number) => {
+    setPlaybackSpeed(speedVal);
+    if (currentTrack && audioRef.current) {
+      const streamUrl = `/api/music/stream?url=${encodeURIComponent(currentTrack.url)}&filter=${encodeURIComponent(selectedFilter)}&speed=${speedVal}`;
+      audioRef.current.src = streamUrl;
+      audioRef.current.play().catch(() => {});
+    }
+  };
+
+  // Start / Stop Bot
+  const handleStartBot = async () => {
+    setIsBotStarting(true);
+    try {
+      const res = await fetch('/api/bot/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: botToken, prefix: botPrefix })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to start bot');
+      } else {
+        fetchStatus();
+        fetchLogs();
+      }
+    } catch (err: any) {
+      alert(`Error starting bot: ${err.message}`);
+    } finally {
+      setIsBotStarting(false);
+    }
+  };
+
+  const handleStopBot = async () => {
+    try {
+      await fetch('/api/bot/stop', { method: 'POST' });
+      fetchStatus();
+      fetchLogs();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Audio Visualizer Canvas Effect
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let bars = 40;
+    let values = new Array(bars).fill(10);
+
+    const render = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const barWidth = (canvas.width / bars) - 2;
+
+      for (let i = 0; i < bars; i++) {
+        if (isPlaying) {
+          const target = Math.random() * (canvas.height * 0.75) + 6;
+          values[i] += (target - values[i]) * 0.2;
+        } else {
+          values[i] += (4 - values[i]) * 0.1;
+        }
+
+        const h = values[i];
+        const x = i * (barWidth + 2);
+        const y = canvas.height - h;
+
+        const grad = ctx.createLinearGradient(0, y, 0, canvas.height);
+        grad.addColorStop(0, '#818cf8');
+        grad.addColorStop(1, '#4f46e5');
+
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.roundRect(x, y, barWidth, h, 2);
+        ctx.fill();
+      }
+
+      animationFrameRef.current = requestAnimationFrame(render);
+    };
+
+    render();
+
+    return () => {
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+    };
+  }, [isPlaying]);
+
+  // Command Simulator Handler
+  const handleSimulate = () => {
+    const input = simCommand.trim();
+    if (input.startsWith('!play')) {
+      const q = input.replace('!play', '').trim() || 'Starboy';
+      setSimOutput({
+        type: 'embed',
+        title: '🎵 Now Playing (yt-dlp + FFmpeg)',
+        color: '#6366f1',
+        fields: [
+          { name: 'Track', value: `**${q.toUpperCase()}**` },
+          { name: 'Author', value: 'The Weeknd' },
+          { name: 'Duration', value: '03:50' },
+          { name: 'Audio Engine', value: '`yt-dlp` -> `FFmpeg` (PCM 48kHz Stereo)' },
+          { name: 'Active Filter', value: `\`${selectedFilter}\`` }
+        ]
+      });
+    } else if (input.startsWith('!filter')) {
+      const f = input.replace('!filter', '').trim() || 'bassboost';
+      setSimOutput({
+        type: 'embed',
+        title: '🎛️ FFmpeg Audio Filter Applied',
+        color: '#10b981',
+        description: `Applied **${f.toUpperCase()}** directly to audio stream via FFmpeg \`-af\` pipeline with 0ms interruption.`
+      });
+    } else if (input.startsWith('!queue')) {
+      setSimOutput({
+        type: 'embed',
+        title: '📜 Server Queue (yt-dlp)',
+        color: '#6366f1',
+        description: '1. Blinding Lights - `03:20`\n2. Save Your Tears - `03:35`\n3. After Hours - `06:01`\n\n*Total duration: 12m 56s*'
+      });
+    } else if (input.startsWith('!system') || input.startsWith('!node')) {
+      setSimOutput({
+        type: 'embed',
+        title: '🚀 Groove Music Audio Engine (Lavalink Removed)',
+        color: '#8b5cf6',
+        description: '**Zero Lavalink Architecture**\n- Extractor: yt-dlp v2026.08.19\n- DSP: FFmpeg v4.4.2\n- Transport: @discordjs/voice (Direct UDP Opus)\n- Latency: 18ms'
+      });
+    } else if (input.startsWith('!lyrics') || input.startsWith('!ly')) {
+      const q = input.replace(/^!(lyrics|ly)/, '').trim() || (currentTrack ? currentTrack.title : 'Blinding Lights');
+      setSimOutput({
+        type: 'embed',
+        title: `📝 Lyrics: ${q} - The Weeknd`,
+        color: '#6366f1',
+        description: `Yeah\n\nI've been tryna call\nI've been on my own for long enough\nMaybe you can show me how to love, maybe\n\nI'm going through withdrawals\nYou don't even have to do too much\nYou can turn me on with just a touch, baby\n\nI look around and Sin City's cold and empty\nNo one's around to judge me\nI can't see clearly when you're gone...`,
+        fields: [
+          { name: 'Source', value: '`LRCLIB Music Database`' },
+          { name: 'Synced Support', value: '`Yes (LRC Available)`' },
+          { name: 'Album', value: '`After Hours`' }
+        ]
+      });
+    } else {
+      setSimOutput({
+        type: 'embed',
+        title: 'Command Executed',
+        color: '#6366f1',
+        description: `Command \`${input}\` executed successfully on Groove Music Bot!`
+      });
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
+      {/* Hidden audio element for browser preview */}
+      <audio
+        ref={audioRef}
+        onEnded={() => {
+          if (queue.length > 0) {
+            const next = queue[0];
+            setQueue(q => q.slice(1));
+            playTrackInStudio(next);
+          } else {
+            setIsPlaying(false);
+          }
+        }}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+      />
+
+      {/* Top Navigation Bar */}
+      <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur-md sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/25 ring-1 ring-white/20">
+              <Disc className="w-6 h-6 text-white animate-spin-slow" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-lg tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white via-indigo-100 to-indigo-400">
+                  Groove Music
+                </span>
+                <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                  <Zap className="w-3 h-3" /> yt-dlp & FFmpeg
+                </span>
+                <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-red-500/10 text-red-400 border border-red-500/20">
+                  No Lavalink
+                </span>
+              </div>
+              <p className="text-xs text-slate-400">High-Performance Discord Audio Streaming</p>
+            </div>
+          </div>
+
+          {/* Tab Selector */}
+          <nav className="flex items-center gap-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800/80">
+            <button
+              onClick={() => setActiveTab('dashboard')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                activeTab === 'dashboard'
+                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              }`}
+            >
+              <Server className="w-3.5 h-3.5" /> Dashboard & Bot
+            </button>
+            <button
+              onClick={() => setActiveTab('studio')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                activeTab === 'studio'
+                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              }`}
+            >
+              <Sliders className="w-3.5 h-3.5" /> Audio Studio & Player
+            </button>
+            <button
+              onClick={() => setActiveTab('commands')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                activeTab === 'commands'
+                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              }`}
+            >
+              <Terminal className="w-3.5 h-3.5" /> Commands Simulator
+            </button>
+            <button
+              onClick={() => setActiveTab('code')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                activeTab === 'code'
+                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              }`}
+            >
+              <Code className="w-3.5 h-3.5" /> Codebase Browser
+            </button>
+            <button
+              onClick={() => setActiveTab('guide')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                activeTab === 'guide'
+                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              }`}
+            >
+              <BookOpen className="w-3.5 h-3.5" /> Hosting Guide
+            </button>
+          </nav>
+
+          {/* Quick Actions */}
+          <div className="flex items-center gap-2">
+            <a
+              href="/api/download-bot"
+              download="Groove-Music-Ytdlp-FFmpeg.zip"
+              className="px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-semibold rounded-lg shadow-lg shadow-emerald-600/20 flex items-center gap-1.5 transition-all"
+            >
+              <Download className="w-3.5 h-3.5" /> Export Bot (.ZIP)
+            </a>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content Body */}
+      <main className="flex-1 max-w-7xl mx-auto w-full px-4 py-6">
+        {/* TAB 1: DASHBOARD & BOT CONTROLLER */}
+        {activeTab === 'dashboard' && (
+          <div className="space-y-6">
+            {/* Top Stat Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 flex items-center gap-3">
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${status?.bot.online ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-400'}`}>
+                  <Activity className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="text-xs text-slate-400 font-medium">Discord Bot Status</div>
+                  <div className="text-lg font-bold flex items-center gap-2">
+                    <span className={`w-2.5 h-2.5 rounded-full ${status?.bot.online ? 'bg-emerald-500 animate-pulse' : 'bg-slate-500'}`} />
+                    {status?.bot.online ? 'ONLINE' : 'STANDBY'}
+                  </div>
+                  <div className="text-xs text-slate-500">{status?.bot.user?.tag || 'Not Connected'}</div>
+                </div>
+              </div>
+
+              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 flex items-center justify-center">
+                  <Zap className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="text-xs text-slate-400 font-medium">Audio Extractor</div>
+                  <div className="text-lg font-bold text-indigo-300">yt-dlp Engine</div>
+                  <div className="text-xs text-slate-400 font-mono">v{status?.engine.ytdlpVersion || '2026.08.19'}</div>
+                </div>
+              </div>
+
+              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-violet-500/10 text-violet-400 border border-violet-500/20 flex items-center justify-center">
+                  <Sliders className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="text-xs text-slate-400 font-medium">DSP & Transcoder</div>
+                  <div className="text-lg font-bold text-violet-300">FFmpeg Core</div>
+                  <div className="text-xs text-slate-400 font-mono">v{status?.engine.ffmpegVersion || '4.4.2'}</div>
+                </div>
+              </div>
+
+              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center justify-center">
+                  <Cpu className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="text-xs text-slate-400 font-medium">System RAM Usage</div>
+                  <div className="text-lg font-bold text-amber-300">
+                    {status?.system.memory.usedMb || 0} MB / {status?.system.memory.totalMb || 0} MB
+                  </div>
+                  <div className="w-32 bg-slate-800 rounded-full h-1.5 mt-1 overflow-hidden">
+                    <div
+                      className="bg-amber-500 h-1.5 rounded-full"
+                      style={{ width: `${status?.system.memory.usagePercent || 15}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Main Controller & Comparison Section */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Bot Controller Panel */}
+              <div className="lg:col-span-1 bg-slate-900/70 border border-slate-800 rounded-2xl p-5 space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                  <div className="flex items-center gap-2 font-semibold">
+                    <Radio className="w-4 h-4 text-indigo-400" /> Bot Instance Controller
+                  </div>
+                  <span className={`text-xs px-2 py-0.5 rounded font-mono ${status?.bot.online ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-400'}`}>
+                    {status?.bot.online ? 'Active' : 'Offline'}
+                  </span>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs font-medium text-slate-300 block mb-1">Discord Bot Token</label>
+                    <input
+                      type="password"
+                      placeholder="MTAyND..."
+                      value={botToken}
+                      onChange={(e) => setBotToken(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                    />
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Token is kept in-memory and never sent to external servers. You can also define it in <code className="text-slate-400">.env</code> as <code className="text-slate-400">DISCORD_TOKEN</code>.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs font-medium text-slate-300 block mb-1">Prefix</label>
+                      <input
+                        type="text"
+                        value={botPrefix}
+                        onChange={(e) => setBotPrefix(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-slate-300 block mb-1">Active Guilds</label>
+                      <div className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-400">
+                        {status?.bot.guildCount || 0} servers
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 flex gap-2">
+                    {!status?.bot.online ? (
+                      <button
+                        onClick={handleStartBot}
+                        disabled={isBotStarting}
+                        className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs rounded-xl shadow-lg shadow-indigo-600/20 flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                      >
+                        {isBotStarting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                        Launch Bot
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleStopBot}
+                        className="flex-1 py-2.5 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 font-medium text-xs rounded-xl flex items-center justify-center gap-2 transition-all"
+                      >
+                        <Square className="w-4 h-4" /> Stop Bot
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Quick Architecture Spec */}
+                <div className="mt-4 pt-4 border-t border-slate-800/80 space-y-2 text-xs">
+                  <div className="text-slate-400 font-medium mb-1">Native Audio Pipeline:</div>
+                  <div className="flex items-center justify-between text-slate-300">
+                    <span>Voice Protocol</span>
+                    <span className="font-mono text-indigo-400">@discordjs/voice (Opus)</span>
+                  </div>
+                  <div className="flex items-center justify-between text-slate-300">
+                    <span>Media Engine</span>
+                    <span className="font-mono text-indigo-400">yt-dlp standalone</span>
+                  </div>
+                  <div className="flex items-center justify-between text-slate-300">
+                    <span>DSP Filter Processing</span>
+                    <span className="font-mono text-indigo-400">FFmpeg 48kHz Stereo</span>
+                  </div>
+                  <div className="flex items-center justify-between text-slate-300">
+                    <span>Lavalink Dependencies</span>
+                    <span className="font-mono text-emerald-400 font-bold">0% (Completely Removed)</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Main Content Column: Config Configurations, Diagnostics, and Logs */}
+              <div className="lg:col-span-2 space-y-6">
+                {/* 1. Bot & Guild Configuration Manager (Config Configurations) */}
+                <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
+                    <div className="flex items-center gap-2 font-semibold text-sm">
+                      <Settings className="w-4 h-4 text-indigo-400" />
+                      Bot & Guild Configuration Manager
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-mono">
+                        Config Configurations
+                      </span>
+                      {configSaveSuccess && (
+                        <span className="text-xs px-2.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1 animate-fade-in font-medium">
+                          <Check className="w-3.5 h-3.5" /> Saved & Applied!
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Config Sub-Tabs */}
+                  <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800/80 gap-1 text-xs">
+                    <button
+                      onClick={() => setConfigSection('audio')}
+                      className={`flex-1 py-1.5 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5 ${
+                        configSection === 'audio'
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <Volume2 className="w-3.5 h-3.5" /> Audio Defaults
+                    </button>
+                    <button
+                      onClick={() => setConfigSection('voice')}
+                      className={`flex-1 py-1.5 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5 ${
+                        configSection === 'voice'
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <Wifi className="w-3.5 h-3.5" /> Voice Behavior
+                    </button>
+                    <button
+                      onClick={() => setConfigSection('rules')}
+                      className={`flex-1 py-1.5 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5 ${
+                        configSection === 'rules'
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5" /> Queue & Governance
+                    </button>
+                  </div>
+
+                  {/* Section 1: Audio Defaults */}
+                  {configSection === 'audio' && (
+                    <div className="space-y-4 pt-1 text-xs">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2 p-3.5 rounded-xl bg-slate-950/60 border border-slate-850">
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium text-slate-300">Default Server Volume</span>
+                            <span className="font-mono text-indigo-400 font-bold">{botConfig.defaultVolume}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="10"
+                            max="200"
+                            step="5"
+                            value={botConfig.defaultVolume}
+                            onChange={(e) => setBotConfig({ ...botConfig, defaultVolume: parseInt(e.target.value) })}
+                            className="w-full accent-indigo-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
+                          />
+                          <p className="text-[11px] text-slate-500">Initial stream loudness applied when a track begins playback.</p>
+                        </div>
+
+                        <div className="space-y-2 p-3.5 rounded-xl bg-slate-950/60 border border-slate-850">
+                          <label className="font-medium text-slate-300 block">Default Audio DSP Filter</label>
+                          <select
+                            value={botConfig.defaultFilter}
+                            onChange={(e) => setBotConfig({ ...botConfig, defaultFilter: e.target.value })}
+                            className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                          >
+                            <option value="clear">✨ Normal / Clear (Studio Audio)</option>
+                            <option value="bassboost">🔊 Bassboost (+12dB Low-end)</option>
+                            <option value="bassboost_soft">🔉 Bassboost Soft</option>
+                            <option value="bassboost_hard">📢 Bassboost Hard</option>
+                            <option value="nightcore">⚡ Nightcore (1.25x Tempo + Pitch)</option>
+                            <option value="vaporwave">🌊 Vaporwave (0.8x Slow + Reverb)</option>
+                            <option value="8d">🎧 8D Surround Sound</option>
+                            <option value="karaoke">🎤 Karaoke (Vocal Suppression)</option>
+                            <option value="echo">🌌 Atmospheric Echo / Delay</option>
+                          </select>
+                          <p className="text-[11px] text-slate-500">Applied automatically to every track queued by members.</p>
+                        </div>
+                      </div>
+
+                      <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-850 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-slate-300">Default Playback Tempo Speed</span>
+                          <span className="font-mono text-indigo-400 font-bold">{botConfig.defaultSpeed}x</span>
+                        </div>
+                        <div className="flex gap-2">
+                          {[0.75, 1.0, 1.25, 1.5, 2.0].map((s) => (
+                            <button
+                              key={s}
+                              onClick={() => setBotConfig({ ...botConfig, defaultSpeed: s })}
+                              className={`flex-1 py-1.5 rounded-lg text-xs font-mono font-medium transition-all ${
+                                botConfig.defaultSpeed === s
+                                  ? 'bg-indigo-600 text-white shadow'
+                                  : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200'
+                              }`}
+                            >
+                              {s}x
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Section 2: Voice Channel Behavior */}
+                  {configSection === 'voice' && (
+                    <div className="space-y-3 pt-1 text-xs">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-950/60 border border-slate-850">
+                          <div>
+                            <div className="font-medium text-slate-200">24/7 Channel Stay Mode</div>
+                            <div className="text-[11px] text-slate-500">Keep bot in voice channel even when queue finishes.</div>
+                          </div>
+                          <button
+                            onClick={() => setBotConfig({ ...botConfig, stay247: !botConfig.stay247 })}
+                            className={`w-11 h-6 rounded-full transition-colors p-0.5 flex items-center ${
+                              botConfig.stay247 ? 'bg-indigo-600 justify-end' : 'bg-slate-800 justify-start'
+                            }`}
+                          >
+                            <span className="w-5 h-5 rounded-full bg-white shadow-md" />
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-950/60 border border-slate-850">
+                          <div>
+                            <div className="font-medium text-slate-200">yt-dlp Autoplay Recommendations</div>
+                            <div className="text-[11px] text-slate-500">Automatically queue similar songs when the queue ends.</div>
+                          </div>
+                          <button
+                            onClick={() => setBotConfig({ ...botConfig, autoplay: !botConfig.autoplay })}
+                            className={`w-11 h-6 rounded-full transition-colors p-0.5 flex items-center ${
+                              botConfig.autoplay ? 'bg-indigo-600 justify-end' : 'bg-slate-800 justify-start'
+                            }`}
+                          >
+                            <span className="w-5 h-5 rounded-full bg-white shadow-md" />
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-950/60 border border-slate-850">
+                          <div>
+                            <div className="font-medium text-slate-200">Announce "Now Playing"</div>
+                            <div className="text-[11px] text-slate-500">Send rich embed into text channel when a new song starts.</div>
+                          </div>
+                          <button
+                            onClick={() => setBotConfig({ ...botConfig, announceNowPlaying: !botConfig.announceNowPlaying })}
+                            className={`w-11 h-6 rounded-full transition-colors p-0.5 flex items-center ${
+                              botConfig.announceNowPlaying ? 'bg-indigo-600 justify-end' : 'bg-slate-800 justify-start'
+                            }`}
+                          >
+                            <span className="w-5 h-5 rounded-full bg-white shadow-md" />
+                          </button>
+                        </div>
+
+                        <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-850 space-y-1.5">
+                          <label className="font-medium text-slate-200 block">Empty Voice Channel Timeout</label>
+                          <select
+                            value={botConfig.emptyChannelTimeout}
+                            onChange={(e) => setBotConfig({ ...botConfig, emptyChannelTimeout: parseInt(e.target.value) })}
+                            className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                          >
+                            <option value={1}>1 Minute</option>
+                            <option value={3}>3 Minutes (Default)</option>
+                            <option value={5}>5 Minutes</option>
+                            <option value={10}>10 Minutes</option>
+                            <option value={0}>Disabled (Never disconnect)</option>
+                          </select>
+                          <div className="text-[11px] text-slate-500">Auto-leaves when all members leave voice channel.</div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Section 3: Queue & Governance */}
+                  {configSection === 'rules' && (
+                    <div className="space-y-3 pt-1 text-xs">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-850 space-y-1.5">
+                          <label className="font-medium text-slate-200 block">Maximum Queue Size Limit</label>
+                          <select
+                            value={botConfig.maxQueueSize}
+                            onChange={(e) => setBotConfig({ ...botConfig, maxQueueSize: parseInt(e.target.value) })}
+                            className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                          >
+                            <option value={50}>50 Tracks</option>
+                            <option value={100}>100 Tracks</option>
+                            <option value={250}>250 Tracks (Default)</option>
+                            <option value={500}>500 Tracks</option>
+                            <option value={1000}>1,000 Tracks (Unlimited)</option>
+                          </select>
+                          <div className="text-[11px] text-slate-500">Prevents spam queue floods on busy servers.</div>
+                        </div>
+
+                        <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-850 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium text-slate-200">Vote-Skip Threshold</span>
+                            <span className="font-mono text-indigo-400 font-bold">{botConfig.voteSkipPercentage}%</span>
+                          </div>
+                          <select
+                            value={botConfig.voteSkipPercentage}
+                            onChange={(e) => setBotConfig({ ...botConfig, voteSkipPercentage: parseInt(e.target.value) })}
+                            className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                          >
+                            <option value={25}>25% of Voice Members</option>
+                            <option value={33}>33% of Voice Members</option>
+                            <option value={50}>50% of Voice Members (Default)</option>
+                            <option value={66}>66% of Voice Members</option>
+                            <option value={75}>75% of Voice Members</option>
+                          </select>
+                          <div className="text-[11px] text-slate-500">Percentage required to pass !skip command.</div>
+                        </div>
+
+                        <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-950/60 border border-slate-850">
+                          <div>
+                            <div className="font-medium text-slate-200">DJ-Only Restricted Mode</div>
+                            <div className="text-[11px] text-slate-500">Only members with "DJ" role can stop, seek, or change filters.</div>
+                          </div>
+                          <button
+                            onClick={() => setBotConfig({ ...botConfig, djOnlyMode: !botConfig.djOnlyMode })}
+                            className={`w-11 h-6 rounded-full transition-colors p-0.5 flex items-center ${
+                              botConfig.djOnlyMode ? 'bg-indigo-600 justify-end' : 'bg-slate-800 justify-start'
+                            }`}
+                          >
+                            <span className="w-5 h-5 rounded-full bg-white shadow-md" />
+                          </button>
+                        </div>
+
+                        <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-850 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium text-slate-200">Discord Embed Accent Color</span>
+                            <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-900 text-slate-300">{botConfig.embedColor}</span>
+                          </div>
+                          <div className="flex gap-2">
+                            {[
+                              { label: 'Indigo', color: '#6366f1' },
+                              { label: 'Emerald', color: '#10b981' },
+                              { label: 'Violet', color: '#8b5cf6' },
+                              { label: 'Rose', color: '#f43f5e' },
+                              { label: 'Amber', color: '#f59e0b' },
+                              { label: 'Cyan', color: '#06b6d4' }
+                            ].map((c) => (
+                              <button
+                                key={c.color}
+                                onClick={() => setBotConfig({ ...botConfig, embedColor: c.color })}
+                                className={`w-7 h-7 rounded-lg transition-transform ${c.color === botConfig.embedColor ? 'ring-2 ring-white scale-110' : 'hover:scale-105'}`}
+                                style={{ backgroundColor: c.color }}
+                                title={c.label}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Save Changes Button */}
+                  <div className="pt-2 flex justify-end">
+                    <button
+                      onClick={() => handleSaveConfig()}
+                      disabled={isSavingConfig}
+                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl shadow-lg shadow-indigo-600/30 flex items-center gap-2 transition-all disabled:opacity-50"
+                    >
+                      {isSavingConfig ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                      Save & Apply Configurations
+                    </button>
+                  </div>
+                </div>
+
+                {/* 2. Audio Engine Health & Diagnostics Benchmark */}
+                <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
+                    <div className="flex items-center gap-2 font-semibold text-sm">
+                      <Gauge className="w-4 h-4 text-emerald-400" />
+                      Audio Engine Health & Transcode Diagnostics
+                    </div>
+                    <button
+                      onClick={handleRunBenchmark}
+                      disabled={isRunningBenchmark}
+                      className="px-3.5 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 font-medium text-xs rounded-lg flex items-center gap-1.5 transition-all disabled:opacity-50"
+                    >
+                      {isRunningBenchmark ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                      Run Diagnostics Benchmark
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                    <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-850 space-y-1">
+                      <div className="text-slate-400 font-medium flex items-center justify-between">
+                        <span>yt-dlp Extractor</span>
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-400 font-mono">
+                          {diagnostics?.ytdlp.status || 'Active'}
+                        </span>
+                      </div>
+                      <div className="text-base font-bold text-white font-mono">
+                        {diagnostics ? `${diagnostics.ytdlp.latencyMs} ms` : '< 120 ms'}
+                      </div>
+                      <div className="text-[11px] text-slate-500">Fast format lookup & direct stream pipe</div>
+                    </div>
+
+                    <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-850 space-y-1">
+                      <div className="text-slate-400 font-medium flex items-center justify-between">
+                        <span>FFmpeg DSP Transcoder</span>
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-400 font-mono">
+                          {diagnostics?.ffmpeg.status || 'Active'}
+                        </span>
+                      </div>
+                      <div className="text-base font-bold text-white font-mono">
+                        {diagnostics ? `${diagnostics.ffmpeg.latencyMs} ms` : '< 25 ms'}
+                      </div>
+                      <div className="text-[11px] text-slate-500">48kHz 16-bit Stereo PCM audio filter processing</div>
+                    </div>
+
+                    <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-850 space-y-1">
+                      <div className="text-slate-400 font-medium flex items-center justify-between">
+                        <span>Voice Transport</span>
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-500/10 text-indigo-400 font-mono">Direct UDP</span>
+                      </div>
+                      <div className="text-base font-bold text-indigo-300 font-mono">
+                        {status?.bot.ping ? `${status.bot.ping} ms` : '< 20 ms'}
+                      </div>
+                      <div className="text-[11px] text-slate-500">Direct @discordjs/voice Opus packets</div>
+                    </div>
+                  </div>
+
+                  {diagnostics && (
+                    <div className="p-3 rounded-xl bg-emerald-950/20 border border-emerald-900/30 text-xs text-emerald-300 flex items-center justify-between">
+                      <span>✓ Benchmark Passed: Both yt-dlp and FFmpeg operating within nominal latency thresholds.</span>
+                      <span className="text-slate-400 text-[11px] font-mono">Tested at {diagnostics.timestamp}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. Connected Discord Voice Channel Sessions Monitor */}
+                <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-slate-300">
+                      <Radio className="w-4 h-4 text-indigo-400" />
+                      Active Voice Sessions ({activeSessions.length})
+                    </div>
+                    <span className="text-[11px] text-slate-500">Auto-synced</span>
+                  </div>
+
+                  {activeSessions.length === 0 ? (
+                    <div className="p-4 rounded-xl bg-slate-950/50 border border-dashed border-slate-800 text-center text-xs text-slate-400 space-y-1">
+                      <div className="font-semibold text-slate-300">No active Discord voice connections</div>
+                      <div className="text-slate-500 text-[11px]">
+                        When your bot is online, join any Discord voice channel and type <code className="text-indigo-400 font-mono">!play &lt;song&gt;</code> or <code className="text-indigo-400 font-mono">!join</code> to stream audio!
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {activeSessions.map((session) => (
+                        <div
+                          key={session.guildId}
+                          className="p-3.5 rounded-xl bg-slate-950 border border-slate-800/80 flex flex-wrap items-center justify-between gap-3 text-xs"
+                        >
+                          <div>
+                            <div className="font-semibold text-white flex items-center gap-2">
+                              <span>{session.guildName}</span>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                {session.isPlaying ? 'Playing' : 'Idle'}
+                              </span>
+                            </div>
+                            <div className="text-slate-400 mt-0.5">
+                              {session.currentTrack ? (
+                                <span>Track: <strong className="text-slate-200">{session.currentTrack.title}</strong> ({session.currentTrack.durationFormatted})</span>
+                              ) : (
+                                <span>Queue empty</span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3 text-[11px] text-slate-400 font-mono">
+                            <span>Vol: {session.volume}%</span>
+                            <span>Filter: {session.filter.toUpperCase()}</span>
+                            <span>Queue: {session.queueCount}</span>
+                            {session.stay247 && <span className="text-indigo-400">24/7 ON</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Live Console / Logs */}
+                <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-slate-300">
+                      <Terminal className="w-4 h-4 text-indigo-400" /> Bot & Engine Activity Log
+                    </div>
+                    <button
+                      onClick={fetchLogs}
+                      className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1"
+                    >
+                      <RefreshCw className="w-3 h-3" /> Refresh
+                    </button>
+                  </div>
+
+                  <div className="bg-slate-950 rounded-xl p-3 h-48 overflow-y-auto font-mono text-[11px] space-y-1 border border-slate-850">
+                    {logs.length === 0 ? (
+                      <div className="text-slate-600 italic">No logs recorded yet.</div>
+                    ) : (
+                      logs.map((log, index) => (
+                        <div key={index} className="flex items-start gap-2">
+                          <span className="text-slate-600 select-none">[{log.timestamp}]</span>
+                          <span
+                            className={
+                              log.level === 'error'
+                                ? 'text-red-400 font-semibold'
+                                : log.level === 'warn'
+                                ? 'text-amber-400'
+                                : 'text-slate-300'
+                            }
+                          >
+                            {log.message}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 2: AUDIO STUDIO & INTERACTIVE PLAYER */}
+        {activeTab === 'studio' && (
+          <div className="space-y-6">
+            {/* Search & Audio Visualizer Hero */}
+            <div className="bg-gradient-to-br from-slate-900 via-slate-900/90 to-indigo-950/40 border border-slate-800 rounded-3xl p-6 relative overflow-hidden">
+              <div className="max-w-2xl space-y-4 relative z-10">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs font-medium">
+                  <Music className="w-3.5 h-3.5" /> Direct yt-dlp & FFmpeg Audio Stream Tester
+                </div>
+                <h2 className="text-2xl font-bold tracking-tight text-white">
+                  Test Audio Streaming & DSP Filters in Real-Time
+                </h2>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Search any song title, artist, or YouTube URL. yt-dlp extracts the audio stream and FFmpeg applies active audio filters (Bassboost, Nightcore, 8D, Vaporwave) right inside your browser!
+                </p>
+
+                {/* Search Bar */}
+                <form onSubmit={handleSearch} className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                    <input
+                      type="text"
+                      placeholder="Search song title or paste YouTube / SoundCloud link..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={isSearching}
+                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs rounded-xl shadow-lg shadow-indigo-600/30 flex items-center gap-2 transition-all disabled:opacity-50"
+                  >
+                    {isSearching ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                    Search
+                  </button>
+                </form>
+              </div>
+
+              {/* Frequency Visualizer Canvas */}
+              <div className="absolute right-6 bottom-4 w-72 h-24 hidden md:block pointer-events-none opacity-80">
+                <canvas ref={canvasRef} width={280} height={90} className="w-full h-full" />
+              </div>
+            </div>
+
+            {/* Active Track Player & Filter Controls */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Now Playing Card & Controls */}
+              <div className="lg:col-span-1 bg-slate-900/80 border border-slate-800 rounded-2xl p-5 space-y-4">
+                <div className="text-xs font-semibold text-slate-400 flex items-center justify-between">
+                  <span>NOW PLAYING PREVIEW</span>
+                  {isPlaying && (
+                    <span className="flex items-center gap-1.5 text-emerald-400">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" /> Streaming
+                    </span>
+                  )}
+                </div>
+
+                {currentTrack ? (
+                  <div className="space-y-4">
+                    <div className="relative aspect-video rounded-xl overflow-hidden bg-slate-950 border border-slate-800 group">
+                      {currentTrack.thumbnail ? (
+                        <img
+                          src={currentTrack.thumbnail}
+                          alt={currentTrack.title}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-slate-600">
+                          <Disc className="w-12 h-12" />
+                        </div>
+                      )}
+                      <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent flex items-end p-3">
+                        <div>
+                          <div className="font-bold text-sm text-white line-clamp-1">{currentTrack.title}</div>
+                          <div className="text-xs text-slate-400">{currentTrack.author} • {currentTrack.durationFormatted}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Audio Player Buttons */}
+                    <div className="flex items-center justify-center gap-3 pt-2">
+                      <button
+                        onClick={() => {
+                          if (audioRef.current) {
+                            if (isPlaying) {
+                              audioRef.current.pause();
+                              setIsPlaying(false);
+                            } else {
+                              audioRef.current.play();
+                              setIsPlaying(true);
+                            }
+                          }
+                        }}
+                        className="w-12 h-12 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center shadow-lg shadow-indigo-600/30 transition-all hover:scale-105"
+                      >
+                        {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 ml-0.5" />}
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          if (queue.length > 0) {
+                            const next = queue[0];
+                            setQueue(q => q.slice(1));
+                            playTrackInStudio(next);
+                          }
+                        }}
+                        disabled={queue.length === 0}
+                        className="w-10 h-10 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center disabled:opacity-40 transition-all"
+                      >
+                        <SkipForward className="w-4 h-4" />
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          if (audioRef.current) {
+                            audioRef.current.pause();
+                            audioRef.current.currentTime = 0;
+                            setIsPlaying(false);
+                          }
+                        }}
+                        className="w-10 h-10 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center transition-all"
+                      >
+                        <Square className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {/* Volume Slider */}
+                    <div className="flex items-center gap-2 pt-2">
+                      <button
+                        onClick={() => {
+                          const nextMute = !isMuted;
+                          setIsMuted(nextMute);
+                          if (audioRef.current) audioRef.current.volume = nextMute ? 0 : volume / 100;
+                        }}
+                        className="text-slate-400 hover:text-slate-200"
+                      >
+                        {isMuted || volume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                      </button>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={isMuted ? 0 : volume}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value);
+                          setVolume(v);
+                          setIsMuted(false);
+                          if (audioRef.current) audioRef.current.volume = v / 100;
+                        }}
+                        className="w-full accent-indigo-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
+                      />
+                      <span className="text-xs font-mono text-slate-400 w-8 text-right">{volume}%</span>
+                    </div>
+
+                    {/* View Lyrics Button */}
+                    <div className="pt-1">
+                      <button
+                        onClick={() => {
+                          const nextState = !showLyricsPanel;
+                          setShowLyricsPanel(nextState);
+                          if (nextState && !lyricsData && currentTrack) {
+                            fetchLyricsForTrack(currentTrack.title, currentTrack.author, currentTrack.url);
+                          }
+                        }}
+                        className={`w-full py-2 px-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
+                          showLyricsPanel
+                            ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-600/20'
+                            : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700'
+                        }`}
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        {showLyricsPanel ? 'Hide Lyrics Panel' : 'View Lyrics & Synced Text'}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="h-48 border border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 text-xs p-4 text-center">
+                    <Music className="w-8 h-8 mb-2 opacity-50" />
+                    Search or pick a track from below to start listening!
+                  </div>
+                )}
+              </div>
+
+              {/* FFmpeg Filter Studio Selector */}
+              <div className="lg:col-span-2 bg-slate-900/80 border border-slate-800 rounded-2xl p-5 space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                  <div className="flex items-center gap-2 font-semibold text-sm">
+                    <Sliders className="w-4 h-4 text-indigo-400" />
+                    FFmpeg DSP Filters (Direct Audio Effects)
+                  </div>
+                  <span className="text-xs px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 font-mono">
+                    Active: {selectedFilter.toUpperCase()}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {[
+                    { id: 'clear', name: 'Normal / Clear', desc: 'Default studio audio', emoji: '✨' },
+                    { id: 'bassboost', name: 'Bassboost', desc: '+12dB low-end boost', emoji: '🔊' },
+                    { id: 'nightcore', name: 'Nightcore', desc: '1.25x tempo + higher pitch', emoji: '⚡' },
+                    { id: 'vaporwave', name: 'Vaporwave', desc: '0.8x slow + relaxed mood', emoji: '🌊' },
+                    { id: '8d', name: '8D Surround', desc: 'Spatial pulsator rotation', emoji: '🎧' },
+                    { id: 'karaoke', name: 'Karaoke', desc: 'Center-channel vocal drop', emoji: '🎤' },
+                    { id: 'tremolo', name: 'Tremolo', desc: 'Dynamic volume oscillation', emoji: '〰️' },
+                    { id: 'echo', name: 'Echo / Delay', desc: 'Atmospheric reverberation', emoji: '🌌' }
+                  ].map((filter) => (
+                    <button
+                      key={filter.id}
+                      onClick={() => handleFilterChange(filter.id)}
+                      className={`p-3 rounded-xl border text-left transition-all ${
+                        selectedFilter === filter.id
+                          ? 'bg-indigo-600/20 border-indigo-500 text-white shadow-md shadow-indigo-500/10'
+                          : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="text-lg mb-1">{filter.emoji}</div>
+                      <div className="font-semibold text-xs">{filter.name}</div>
+                      <div className="text-[11px] text-slate-500 line-clamp-1">{filter.desc}</div>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Speed Multiplier (FFmpeg atempo) */}
+                <div className="pt-3 border-t border-slate-800">
+                  <div className="flex items-center justify-between text-xs mb-2">
+                    <span className="font-medium text-slate-300">FFmpeg atempo Speed Multiplier:</span>
+                    <span className="font-mono text-indigo-400 font-bold">{playbackSpeed}x</span>
+                  </div>
+                  <div className="flex gap-2">
+                    {[0.75, 1.0, 1.25, 1.5, 2.0].map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => handleSpeedChange(s)}
+                        className={`flex-1 py-1.5 rounded-lg text-xs font-mono font-medium transition-all ${
+                          playbackSpeed === s
+                            ? 'bg-indigo-600 text-white'
+                            : 'bg-slate-950 border border-slate-800 text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        {s}x
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Search Results & Queue Section */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Search Results */}
+              <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 space-y-3">
+                <h3 className="text-sm font-semibold flex items-center justify-between">
+                  <span>Search Results ({searchResults.length})</span>
+                  <span className="text-xs font-normal text-slate-500">Extracted with yt-dlp</span>
+                </h3>
+
+                {searchResults.length === 0 ? (
+                  <div className="text-center py-10 text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl">
+                    Search for a song title above to view yt-dlp extracted tracks.
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+                    {searchResults.map((track) => (
+                      <div
+                        key={track.id || track.url}
+                        className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 transition-all group"
+                      >
+                        <div className="flex items-center gap-3 overflow-hidden">
+                          <img
+                            src={track.thumbnail}
+                            alt={track.title}
+                            className="w-12 h-12 rounded-lg object-cover bg-slate-900 flex-shrink-0"
+                          />
+                          <div className="overflow-hidden">
+                            <div className="text-xs font-medium text-slate-200 truncate group-hover:text-indigo-400 transition-colors">
+                              {track.title}
+                            </div>
+                            <div className="text-[11px] text-slate-500 truncate">
+                              {track.author} • {track.durationFormatted}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <button
+                            onClick={() => playTrackInStudio(track)}
+                            className="p-2 rounded-lg bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600 hover:text-white transition-all text-xs flex items-center gap-1"
+                            title="Play Now"
+                          >
+                            <Play className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => setQueue((q) => [...q, track])}
+                            className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition-all text-xs"
+                            title="Add to Queue"
+                          >
+                            + Queue
+                          </button>
+                          <button
+                            onClick={() => fetchLyricsForTrack(track.title, track.author, track.url)}
+                            className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition-all text-xs"
+                            title="View Lyrics"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Simulated Queue */}
+              <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold flex items-center gap-2">
+                    <Disc className="w-4 h-4 text-indigo-400" />
+                    Up Next Queue ({queue.length})
+                  </h3>
+                  {queue.length > 0 && (
+                    <button
+                      onClick={() => setQueue([])}
+                      className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1"
+                    >
+                      <Trash2 className="w-3 h-3" /> Clear Queue
+                    </button>
+                  )}
+                </div>
+
+                {queue.length === 0 ? (
+                  <div className="text-center py-10 text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl">
+                    Queue is empty. Click "+ Queue" on any track to add it!
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+                    {queue.map((track, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80"
+                      >
+                        <div className="flex items-center gap-2.5 overflow-hidden">
+                          <span className="text-xs font-mono text-slate-500 w-4">{idx + 1}.</span>
+                          <div className="truncate">
+                            <div className="text-xs font-medium text-slate-200 truncate">{track.title}</div>
+                            <div className="text-[11px] text-slate-500">{track.author} • {track.durationFormatted}</div>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => setQueue((q) => q.filter((_, i) => i !== idx))}
+                          className="text-slate-500 hover:text-red-400 p-1"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Lyrics Display Card */}
+            {(showLyricsPanel || lyricsData) && (
+              <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-indigo-600/20 text-indigo-400 flex items-center justify-center">
+                      <FileText className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="font-semibold text-sm text-white flex items-center gap-2">
+                        <span>{lyricsData ? lyricsData.title : 'Lyrics Viewer'}</span>
+                        {lyricsData?.artist && (
+                          <span className="text-xs text-slate-400 font-normal">by {lyricsData.artist}</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        {lyricsData?.source && (
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
+                            {lyricsData.source}
+                          </span>
+                        )}
+                        {lyricsData?.album && (
+                          <span className="text-[10px] text-slate-400">
+                            Album: {lyricsData.album}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {lyricsData?.syncedLyrics && (
+                      <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs">
+                        <button
+                          onClick={() => setLyricsViewType('plain')}
+                          className={`px-2.5 py-1 rounded text-xs transition-all ${
+                            lyricsViewType === 'plain'
+                              ? 'bg-indigo-600 text-white font-medium'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          Plain Text
+                        </button>
+                        <button
+                          onClick={() => setLyricsViewType('synced')}
+                          className={`px-2.5 py-1 rounded text-xs transition-all ${
+                            lyricsViewType === 'synced'
+                              ? 'bg-indigo-600 text-white font-medium'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          Synced LRC
+                        </button>
+                      </div>
+                    )}
+
+                    {lyricsData?.lyrics && (
+                      <button
+                        onClick={() => {
+                          const text = lyricsViewType === 'synced' && lyricsData.syncedLyrics ? lyricsData.syncedLyrics : lyricsData.lyrics;
+                          navigator.clipboard.writeText(text);
+                          setCopiedLyrics(true);
+                          setTimeout(() => setCopiedLyrics(false), 2000);
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs flex items-center gap-1.5 transition-all"
+                      >
+                        {copiedLyrics ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        {copiedLyrics ? 'Copied' : 'Copy'}
+                      </button>
+                    )}
+
+                    <button
+                      onClick={() => setShowLyricsPanel(false)}
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-slate-200 text-xs"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+
+                {isLoadingLyrics ? (
+                  <div className="py-12 flex flex-col items-center justify-center text-xs text-slate-400 space-y-2">
+                    <RefreshCw className="w-6 h-6 text-indigo-400 animate-spin" />
+                    <span>Searching LRCLIB & yt-dlp video metadata for lyrics...</span>
+                  </div>
+                ) : lyricsData ? (
+                  <div className="bg-slate-950 rounded-xl p-5 max-h-96 overflow-y-auto border border-slate-850">
+                    {lyricsViewType === 'synced' && lyricsData.syncedLyrics ? (
+                      <div className="space-y-1.5 font-mono text-xs">
+                        {lyricsData.syncedLyrics.split('\n').map((line, idx) => {
+                          const match = line.match(/^(\[\d+:\d+\.\d+\])(.*)/);
+                          if (match) {
+                            return (
+                              <div key={idx} className="flex items-start gap-3 hover:bg-slate-900/60 p-1 rounded">
+                                <span className="text-indigo-400 select-none text-[11px] font-semibold">{match[1]}</span>
+                                <span className="text-slate-200">{match[2] || '♪'}</span>
+                              </div>
+                            );
+                          }
+                          return <div key={idx} className="text-slate-400">{line}</div>;
+                        })}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-slate-200 whitespace-pre-line leading-relaxed font-sans">
+                        {lyricsData.lyrics}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-xs text-slate-500">
+                    No lyrics loaded. Play a track or click "View Lyrics" on any search result to view lyrics.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 3: COMMANDS SIMULATOR */}
+        {activeTab === 'commands' && (
+          <div className="space-y-6">
+            {/* Top Interactive Prompt */}
+            <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold flex items-center gap-2">
+                    <Terminal className="w-4 h-4 text-indigo-400" />
+                    Interactive Discord Command Simulator
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Test any Groove Music command and preview the bot's generated rich embeds in real time.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={simCommand}
+                  onChange={(e) => setSimCommand(e.target.value)}
+                  placeholder="e.g. !play blinding lights or !filter nightcore or !queue"
+                  className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs font-mono text-indigo-300 focus:outline-none focus:border-indigo-500"
+                />
+                <button
+                  onClick={handleSimulate}
+                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs rounded-xl shadow-lg shadow-indigo-600/30 flex items-center gap-2"
+                >
+                  <Zap className="w-4 h-4" /> Execute
+                </button>
+              </div>
+
+              {/* Quick Command Pills */}
+              <div className="flex flex-wrap gap-1.5 text-xs">
+                <span className="text-slate-500 self-center mr-1">Quick Run:</span>
+                {[
+                  '!play starboy',
+                  '!lyrics',
+                  '!lyrics bohemian rhapsody',
+                  '!filter nightcore',
+                  '!filter bassboost',
+                  '!queue',
+                  '!nowplaying',
+                  '!speed 1.5',
+                  '!volume 100',
+                  '!system',
+                  '!help'
+                ].map((cmd) => (
+                  <button
+                    key={cmd}
+                    onClick={() => {
+                      setSimCommand(cmd);
+                      setTimeout(handleSimulate, 50);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-slate-300 hover:border-indigo-500 font-mono text-[11px] transition-all"
+                  >
+                    {cmd}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Simulated Discord Embed Window */}
+            {simOutput && (
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 max-w-xl mx-auto shadow-2xl">
+                <div className="text-[11px] text-slate-500 mb-2 font-mono flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400" /> Groove Music (Bot Response)
+                </div>
+                <div
+                  className="border-l-4 rounded-r-xl bg-slate-950 p-4 space-y-3"
+                  style={{ borderLeftColor: simOutput.color || '#6366f1' }}
+                >
+                  {simOutput.title && (
+                    <div className="font-bold text-sm text-white">{simOutput.title}</div>
+                  )}
+                  {simOutput.description && (
+                    <div className="text-xs text-slate-300 whitespace-pre-line">{simOutput.description}</div>
+                  )}
+                  {simOutput.fields && (
+                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-850">
+                      {simOutput.fields.map((f: any, idx: number) => (
+                        <div key={idx} className="text-xs">
+                          <div className="text-slate-500 text-[11px]">{f.name}</div>
+                          <div className="text-slate-200 font-medium">{f.value}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Complete Converted Commands List */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Music Category */}
+              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-3">
+                <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <Music className="w-4 h-4" /> Music Commands (30)
+                </h4>
+                <div className="space-y-2 text-xs">
+                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-indigo-300 font-semibold">!play &lt;query&gt;</span>
+                    <p className="text-slate-400 text-[11px] mt-0.5">Stream track or playlist using yt-dlp & FFmpeg</p>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-indigo-300 font-semibold">!pause / !resume</span>
+                    <p className="text-slate-400 text-[11px] mt-0.5">Toggle playback state with 0 frame drops</p>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-indigo-300 font-semibold">!skip / !skipto &lt;#&gt;</span>
+                    <p className="text-slate-400 text-[11px] mt-0.5">Skip to next song or jump in queue</p>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-indigo-300 font-semibold">!seek &lt;mm:ss&gt;</span>
+                    <p className="text-slate-400 text-[11px] mt-0.5">Accurate timestamp seeking via FFmpeg -ss</p>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-indigo-300 font-semibold">!speed &lt;0.5-2.0&gt;</span>
+                    <p className="text-slate-400 text-[11px] mt-0.5">Dynamic tempo adjustment via FFmpeg atempo</p>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-indigo-300 font-semibold">!autoplay</span>
+                    <p className="text-slate-400 text-[11px] mt-0.5">Endless similar songs recommendation algorithm</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Filters Category */}
+              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-3">
+                <h4 className="text-xs font-bold text-violet-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <Sliders className="w-4 h-4" /> FFmpeg Filter Commands (9)
+                </h4>
+                <div className="space-y-2 text-xs">
+                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-violet-300 font-semibold">!filter bassboost</span>
+                    <p className="text-slate-400 text-[11px] mt-0.5">Heavy low-frequency gain enhancement</p>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-violet-300 font-semibold">!filter nightcore</span>
+                    <p className="text-slate-400 text-[11px] mt-0.5">High tempo + pitch shift aesthetic</p>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-violet-300 font-semibold">!filter vaporwave</span>
+                    <p className="text-slate-400 text-[11px] mt-0.5">Slowed + reverb retro aesthetic</p>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-violet-300 font-semibold">!filter 8d</span>
+                    <p className="text-slate-400 text-[11px] mt-0.5">Spatial binaural rotating surround audio</p>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-violet-300 font-semibold">!filter clear</span>
+                    <p className="text-slate-400 text-[11px] mt-0.5">Resets all FFmpeg filters back to standard</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Config & Engine Commands */}
+              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-3">
+                <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <Server className="w-4 h-4" /> Config & Engine Commands
+                </h4>
+                <div className="space-y-2 text-xs">
+                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-emerald-300 font-semibold">!247</span>
+                    <p className="text-slate-400 text-[11px] mt-0.5">Keep bot in voice channel 24/7 without leaving</p>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-emerald-300 font-semibold">!system (or !node)</span>
+                    <p className="text-slate-400 text-[11px] mt-0.5">Host CPU, RAM, yt-dlp version, and FFmpeg stats</p>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-emerald-300 font-semibold">!setprefix &lt;prefix&gt;</span>
+                    <p className="text-slate-400 text-[11px] mt-0.5">Change bot prefix for your server</p>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-emerald-300 font-semibold">!source</span>
+                    <p className="text-slate-400 text-[11px] mt-0.5">Displays yt-dlp & FFmpeg audio engine information</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 4: CODEBASE BROWSER */}
+        {activeTab === 'code' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold flex items-center gap-2">
+                  <Code className="w-4 h-4 text-indigo-400" />
+                  Bot Codebase Explorer (Zero Lavalink)
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Inspect the converted project structure. Notice that all Lavalink classes and node events were removed and replaced with <code className="text-indigo-300">YtdlpFFmpegEngine.js</code> and <code className="text-indigo-300">PlayerManager.js</code>.
+                </p>
+              </div>
+
+              <a
+                href="/api/download-bot"
+                download="Groove-Music-Ytdlp-FFmpeg.zip"
+                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 shadow-md shadow-emerald-600/20"
+              >
+                <Download className="w-3.5 h-3.5" /> Download Full Codebase (.ZIP)
+              </a>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+              {/* File Tree */}
+              <div className="lg:col-span-1 bg-slate-900/80 border border-slate-800 rounded-2xl p-3 h-[600px] overflow-y-auto">
+                <div className="text-xs font-semibold text-slate-400 mb-2 px-2 uppercase tracking-wider">
+                  Files ({fileList.filter(f => !f.isDir).length})
+                </div>
+                <div className="space-y-0.5">
+                  {fileList.map((file) => {
+                    if (file.isDir) {
+                      return (
+                        <div key={file.path} className="px-2 py-1 text-[11px] font-semibold text-slate-400 flex items-center gap-1.5 mt-2">
+                          <ChevronRight className="w-3 h-3 text-slate-600" />
+                          <span>{file.name}</span>
+                        </div>
+                      );
+                    }
+
+                    const isSelected = selectedFile === file.path;
+                    const isCore = file.name.includes('Ytdlp') || file.name.includes('Player') || file.name.includes('play.js') || file.name.includes('filter.js');
+
+                    return (
+                      <button
+                        key={file.path}
+                        onClick={() => fetchFileContent(file.path)}
+                        className={`w-full text-left px-3 py-1.5 rounded-lg text-xs font-mono flex items-center justify-between transition-all ${
+                          isSelected
+                            ? 'bg-indigo-600 text-white font-semibold shadow'
+                            : 'text-slate-300 hover:bg-slate-800/60'
+                        }`}
+                      >
+                        <span className="truncate flex items-center gap-1.5">
+                          <FileCode className="w-3.5 h-3.5 opacity-60 flex-shrink-0" />
+                          <span className="truncate">{file.name}</span>
+                        </span>
+                        {isCore && (
+                          <span className={`text-[10px] px-1.5 py-0.2 rounded ${isSelected ? 'bg-white/20 text-white' : 'bg-indigo-500/10 text-indigo-400'}`}>
+                            core
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Code Viewer */}
+              <div className="lg:col-span-3 bg-slate-900/80 border border-slate-800 rounded-2xl flex flex-col h-[600px] overflow-hidden">
+                <div className="bg-slate-950 px-4 py-2.5 border-b border-slate-800 flex items-center justify-between">
+                  <div className="flex items-center gap-2 font-mono text-xs text-indigo-300">
+                    <FileCode className="w-4 h-4 text-indigo-400" />
+                    <span>bot/{selectedFile}</span>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(fileContent);
+                      setCopiedCode(true);
+                      setTimeout(() => setCopiedCode(false), 2000);
+                    }}
+                    className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs flex items-center gap-1.5 transition-all"
+                  >
+                    {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    {copiedCode ? 'Copied!' : 'Copy Code'}
+                  </button>
+                </div>
+
+                <div className="flex-1 bg-slate-950/90 p-4 overflow-auto">
+                  <pre className="text-xs font-mono text-slate-300 leading-relaxed">
+                    <code>{fileContent || '// Select a file to view content'}</code>
+                  </pre>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 5: HOSTING & DEPLOYMENT GUIDE */}
+        {activeTab === 'guide' && (
+          <div className="max-w-4xl mx-auto space-y-6">
+            <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 space-y-3">
+              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                <BookOpen className="w-5 h-5 text-indigo-400" />
+                Complete Deployment & Setup Guide
+              </h3>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Because all Lavalink requirements have been removed, hosting this music bot is now drastically easier and cheaper. You no longer need to run or pay for a separate Java server!
+              </p>
+            </div>
+
+            {/* Step 1: System Packages */}
+            <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 space-y-4">
+              <div className="flex items-center gap-2 font-semibold text-sm text-indigo-300">
+                <span className="w-6 h-6 rounded-full bg-indigo-600/30 text-indigo-400 flex items-center justify-center text-xs">1</span>
+                Install FFmpeg and yt-dlp on Your Server
+              </div>
+
+              <div className="space-y-3 text-xs">
+                <div>
+                  <div className="text-slate-400 mb-1 font-medium">Ubuntu / Debian:</div>
+                  <pre className="bg-slate-950 p-3 rounded-xl border border-slate-800 font-mono text-emerald-400 overflow-x-auto">
+{`# 1. Install FFmpeg
+sudo apt update && sudo apt install -y ffmpeg
+
+# 2. Install latest yt-dlp binary
+sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
+sudo chmod a+rx /usr/local/bin/yt-dlp
+
+# 3. Verify installations
+ffmpeg -version
+yt-dlp --version`}
+                  </pre>
+                </div>
+
+                <div>
+                  <div className="text-slate-400 mb-1 font-medium">Windows (PowerShell):</div>
+                  <pre className="bg-slate-950 p-3 rounded-xl border border-slate-800 font-mono text-emerald-400 overflow-x-auto">
+{`winget install Gyan.FFmpeg
+winget install yt-dlp`}
+                  </pre>
+                </div>
+              </div>
+            </div>
+
+            {/* Step 2: Environment Setup */}
+            <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 space-y-4">
+              <div className="flex items-center gap-2 font-semibold text-sm text-indigo-300">
+                <span className="w-6 h-6 rounded-full bg-indigo-600/30 text-indigo-400 flex items-center justify-center text-xs">2</span>
+                Configure Bot Token (.env)
+              </div>
+              <p className="text-xs text-slate-400">
+                Create a file named <code className="text-indigo-300">.env</code> in the bot directory:
+              </p>
+              <pre className="bg-slate-950 p-3 rounded-xl border border-slate-800 font-mono text-emerald-400 text-xs overflow-x-auto">
+{`DISCORD_TOKEN=MTAyNDM...YOUR_TOKEN_HERE
+BOT_PREFIX=!
+OWNER_IDS=123456789012345678
+YTDLP_PATH=yt-dlp
+FFMPEG_PATH=ffmpeg`}
+              </pre>
+            </div>
+
+            {/* Step 3: Run the Bot */}
+            <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 space-y-4">
+              <div className="flex items-center gap-2 font-semibold text-sm text-indigo-300">
+                <span className="w-6 h-6 rounded-full bg-indigo-600/30 text-indigo-400 flex items-center justify-center text-xs">3</span>
+                Install Node Dependencies & Start
+              </div>
+              <pre className="bg-slate-950 p-3 rounded-xl border border-slate-800 font-mono text-emerald-400 text-xs overflow-x-auto">
+{`# Install dependencies
+npm install
+
+# Start bot in standard mode
+npm start
+
+# Or run with PM2 for 24/7 background uptime:
+npm install -g pm2
+pm2 start index.js --name "groove-music"`}
+              </pre>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* Footer */}
+      <footer className="border-t border-slate-800 bg-slate-900/60 py-4 px-4 text-center text-xs text-slate-500">
+        Groove Music Bot • Native yt-dlp & FFmpeg Audio Engine (Zero Lavalink Architecture) • Ready for Production
+      </footer>
+    </div>
+  );
+}

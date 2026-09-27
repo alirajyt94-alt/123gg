@@ -1,0 +1,45 @@
+{
+  "prefix": "!",
+  "token": "YOUR_DISCORD_BOT_TOKEN_HERE",
+  "ownerIds": ["123456789012345678"],
+  "clientId": "YOUR_CLIENT_ID",
+  "clientSecret": "YOUR_CLIENT_SECRET",
+  "embedColor": "#6366f1",
+  "engine": {
+    "type": "ytdlp-ffmpeg",
+    "ytdlpPath": "yt-dlp",
+    "ffmpegPath": "ffmpeg",
+    "defaultVolume": 80,
+    "maxVolume": 200,
+    "defaultSource": "ytsearch",
+    "audioBufferMs": 1000,
+    "reconnect": true,
+    "opusBitrate": 128
+  },
+  "defaultSettings": {
+    "twentyFourSeven": false,
+    "autoplay": false,
+    "defaultVolume": 80,
+    "voiceStayTime": 180000
+  },
+  "emojis": {
+    "play": "▶️",
+    "pause": "⏸️",
+    "stop": "⏹️",
+    "skip": "⏭️",
+    "previous": "⏮️",
+    "loop": "🔁",
+    "shuffle": "🔀",
+    "volume": "🔊",
+    "mute": "🔇",
+    "queue": "📜",
+    "music": "🎵",
+    "success": "✅",
+    "error": "❌",
+    "warn": "⚠️",
+    "filter": "🎛️",
+    "search": "🔍",
+    "sparkles": "✨",
+    "headphones": "🎧"
+  }
+}

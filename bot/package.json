@@ -1,0 +1,29 @@
+{
+  "name": "groove-music",
+  "version": "2.0.0",
+  "description": "High-performance Discord Music Bot powered by yt-dlp & FFmpeg with native voice streaming (Zero Lavalink dependencies)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "shard": "node Shard.js"
+  },
+  "keywords": [
+    "discord",
+    "discordjs",
+    "music-bot",
+    "yt-dlp",
+    "ffmpeg",
+    "voice",
+    "no-lavalink"
+  ],
+  "author": "Groove Music Team",
+  "license": "MIT",
+  "dependencies": {
+    "@discordjs/voice": "^0.18.0",
+    "discord.js": "^14.18.0",
+    "dotenv": "^16.4.5",
+    "prism-media": "^1.3.5",
+    "tweetnacl": "^1.0.3",
+    "opusscript": "^0.1.1"
+  }
+}
