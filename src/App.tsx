@@ -45,7 +45,12 @@ import {
   Wifi,
   Package,
   Plus,
-  Folder
+  Folder,
+  Save,
+  ListMusic,
+  Bookmark,
+  FolderHeart,
+  PlayCircle
 } from 'lucide-react';
 
 interface BotConfig {
@@ -148,6 +153,13 @@ interface Track {
   views?: number;
 }
 
+interface SavedPlaylist {
+  id: string;
+  name: string;
+  createdAt: number;
+  tracks: Track[];
+}
+
 interface BotLog {
   timestamp: string;
   level: 'info' | 'warn' | 'error';
@@ -180,6 +192,64 @@ export default function App() {
   const [volume, setVolume] = useState(80);
   const [isMuted, setIsMuted] = useState(false);
   const [loopMode, setLoopMode] = useState<'off' | 'track' | 'queue'>('off');
+
+  // Saved Playlists State (localStorage)
+  const [savedPlaylists, setSavedPlaylists] = useState<SavedPlaylist[]>(() => {
+    try {
+      const stored = localStorage.getItem('groove_saved_playlists');
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch {}
+    return [
+      {
+        id: 'starter-1',
+        name: 'Chill Vibes & Synthwave',
+        createdAt: Date.now() - 86400000,
+        tracks: [
+          {
+            id: 'demo-1',
+            title: 'Blinding Lights',
+            author: 'The Weeknd',
+            duration: 200,
+            durationFormatted: '03:20',
+            url: 'https://www.youtube.com/watch?v=4NRXx6U8ABQ',
+            thumbnail: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=300&auto=format&fit=crop&q=80'
+          },
+          {
+            id: 'demo-2',
+            title: 'Midnight City',
+            author: 'M83',
+            duration: 244,
+            durationFormatted: '04:04',
+            url: 'https://www.youtube.com/watch?v=dX3k_QDnzHE',
+            thumbnail: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=300&auto=format&fit=crop&q=80'
+          }
+        ]
+      },
+      {
+        id: 'starter-2',
+        name: 'Late Night Coding',
+        createdAt: Date.now() - 43200000,
+        tracks: [
+          {
+            id: 'demo-3',
+            title: 'Resonance',
+            author: 'HOME',
+            duration: 212,
+            durationFormatted: '03:32',
+            url: 'https://www.youtube.com/watch?v=8GW6sLrK40k',
+            thumbnail: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300&auto=format&fit=crop&q=80'
+          }
+        ]
+      }
+    ];
+  });
+  const [playlistNameInput, setPlaylistNameInput] = useState('');
+  const [isSavingPlaylist, setIsSavingPlaylist] = useState(false);
+  const [playlistTabMode, setPlaylistTabMode] = useState<'queue' | 'saved'>('queue');
+  const [playlistFeedback, setPlaylistFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [previewPlaylistId, setPreviewPlaylistId] = useState<string | null>(null);
 
   // Lyrics State
   const [lyricsData, setLyricsData] = useState<LyricsData | null>(null);
@@ -624,6 +694,97 @@ export default function App() {
       audioRef.current.src = streamUrl;
       audioRef.current.play().catch(() => {});
     }
+  };
+
+  // Playlist Management Handlers (localStorage)
+  const handleSaveCurrentQueue = (nameToSave?: string) => {
+    const finalName = (nameToSave || playlistNameInput).trim();
+    if (!finalName) {
+      setPlaylistFeedback({ type: 'error', message: 'Please enter a name for your playlist.' });
+      setTimeout(() => setPlaylistFeedback(null), 3000);
+      return;
+    }
+
+    const tracksToSave = queue.length > 0 ? [...queue] : (currentTrack ? [currentTrack] : []);
+    if (tracksToSave.length === 0) {
+      setPlaylistFeedback({ type: 'error', message: 'Queue is empty! Search and queue tracks first.' });
+      setTimeout(() => setPlaylistFeedback(null), 3000);
+      return;
+    }
+
+    const newPlaylist: SavedPlaylist = {
+      id: 'pl-' + Date.now(),
+      name: finalName,
+      createdAt: Date.now(),
+      tracks: tracksToSave
+    };
+
+    const updated = [newPlaylist, ...savedPlaylists];
+    setSavedPlaylists(updated);
+    try {
+      localStorage.setItem('groove_saved_playlists', JSON.stringify(updated));
+    } catch (err) {
+      console.error('Error saving to localStorage:', err);
+    }
+
+    setPlaylistNameInput('');
+    setIsSavingPlaylist(false);
+    setPlaylistFeedback({
+      type: 'success',
+      message: `Saved "${finalName}" with ${tracksToSave.length} track${tracksToSave.length > 1 ? 's' : ''}!`
+    });
+    setTimeout(() => setPlaylistFeedback(null), 3500);
+  };
+
+  const handleLoadPlaylist = (playlist: SavedPlaylist, mode: 'replace' | 'append') => {
+    if (!playlist.tracks || playlist.tracks.length === 0) return;
+
+    if (mode === 'replace') {
+      setQueue([...playlist.tracks]);
+      setPlaylistFeedback({
+        type: 'success',
+        message: `Loaded "${playlist.name}" (${playlist.tracks.length} tracks into queue).`
+      });
+    } else {
+      setQueue((prev) => [...prev, ...playlist.tracks]);
+      setPlaylistFeedback({
+        type: 'success',
+        message: `Appended ${playlist.tracks.length} tracks from "${playlist.name}" to queue.`
+      });
+    }
+    setPlaylistTabMode('queue');
+    setTimeout(() => setPlaylistFeedback(null), 3500);
+  };
+
+  const handlePlayPlaylistNow = (playlist: SavedPlaylist) => {
+    if (!playlist.tracks || playlist.tracks.length === 0) return;
+
+    const firstTrack = playlist.tracks[0];
+    const remaining = playlist.tracks.slice(1);
+
+    setQueue(remaining);
+    playTrackInStudio(firstTrack);
+    setPlaylistTabMode('queue');
+    setPlaylistFeedback({
+      type: 'success',
+      message: `Now playing "${playlist.name}" starting with "${firstTrack.title}"!`
+    });
+    setTimeout(() => setPlaylistFeedback(null), 3500);
+  };
+
+  const handleDeletePlaylist = (id: string, name: string) => {
+    if (!confirm(`Are you sure you want to delete saved playlist "${name}"?`)) return;
+
+    const updated = savedPlaylists.filter((p) => p.id !== id);
+    setSavedPlaylists(updated);
+    try {
+      localStorage.setItem('groove_saved_playlists', JSON.stringify(updated));
+    } catch {}
+    setPlaylistFeedback({
+      type: 'success',
+      message: `Deleted playlist "${name}".`
+    });
+    setTimeout(() => setPlaylistFeedback(null), 3000);
   };
 
   // Start / Stop Bot
@@ -2157,50 +2318,288 @@ export default function App() {
                 )}
               </div>
 
-              {/* Simulated Queue */}
+              {/* Up Next Queue & Saved Playlists Hub */}
               <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold flex items-center gap-2">
-                    <Disc className="w-4 h-4 text-indigo-400" />
-                    Up Next Queue ({queue.length})
-                  </h3>
-                  {queue.length > 0 && (
+                {/* Header & Mode Switcher */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-800/80">
+                  <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
                     <button
-                      onClick={() => setQueue([])}
-                      className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1"
+                      onClick={() => setPlaylistTabMode('queue')}
+                      className={`px-3 py-1 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+                        playlistTabMode === 'queue'
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
                     >
-                      <Trash2 className="w-3 h-3" /> Clear Queue
+                      <Disc className="w-3.5 h-3.5" />
+                      Queue ({queue.length})
                     </button>
-                  )}
+                    <button
+                      onClick={() => setPlaylistTabMode('saved')}
+                      className={`px-3 py-1 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+                        playlistTabMode === 'saved'
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <ListMusic className="w-3.5 h-3.5" />
+                      Saved Playlists ({savedPlaylists.length})
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => setIsSavingPlaylist(!isSavingPlaylist)}
+                      className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-all flex items-center gap-1 ${
+                        isSavingPlaylist
+                          ? 'bg-indigo-600 text-white border-indigo-500'
+                          : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700'
+                      }`}
+                      title="Save current queue as a named playlist in localStorage"
+                    >
+                      <Bookmark className="w-3.5 h-3.5 text-amber-400" />
+                      Save Queue
+                    </button>
+
+                    {playlistTabMode === 'queue' && queue.length > 0 && (
+                      <button
+                        onClick={() => setQueue([])}
+                        className="text-xs text-red-400 hover:text-red-300 px-2 py-1 rounded-lg hover:bg-red-950/20 flex items-center gap-1 transition-all"
+                      >
+                        <Trash2 className="w-3 h-3" /> Clear
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                {queue.length === 0 ? (
-                  <div className="text-center py-10 text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl">
-                    Queue is empty. Click "+ Queue" on any track to add it!
+                {/* Playlist Action Feedback Toast */}
+                {playlistFeedback && (
+                  <div
+                    className={`p-2.5 rounded-xl text-xs flex items-center gap-2 animate-fade-in ${
+                      playlistFeedback.type === 'success'
+                        ? 'bg-emerald-950/40 border border-emerald-800/80 text-emerald-300'
+                        : 'bg-red-950/40 border border-red-800/80 text-red-300'
+                    }`}
+                  >
+                    {playlistFeedback.type === 'success' ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
+                    )}
+                    <span>{playlistFeedback.message}</span>
                   </div>
-                ) : (
-                  <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
-                    {queue.map((track, idx) => (
-                      <div
-                        key={idx}
-                        className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80"
-                      >
-                        <div className="flex items-center gap-2.5 overflow-hidden">
-                          <span className="text-xs font-mono text-slate-500 w-4">{idx + 1}.</span>
-                          <div className="truncate">
-                            <div className="text-xs font-medium text-slate-200 truncate">{track.title}</div>
-                            <div className="text-[11px] text-slate-500">{track.author} • {track.durationFormatted}</div>
-                          </div>
-                        </div>
+                )}
 
-                        <button
-                          onClick={() => setQueue((q) => q.filter((_, i) => i !== idx))}
-                          className="text-slate-500 hover:text-red-400 p-1"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                {/* Inline Save Queue as Playlist Drawer */}
+                {isSavingPlaylist && (
+                  <div className="p-3.5 rounded-xl bg-slate-950/80 border border-indigo-500/30 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-white flex items-center gap-1.5">
+                        <Save className="w-3.5 h-3.5 text-indigo-400" />
+                        Save Current Queue to LocalStorage
+                      </span>
+                      <span className="text-[11px] text-slate-500 font-mono">
+                        {queue.length > 0 ? `${queue.length} track(s) in queue` : (currentTrack ? '1 active track' : 'Empty')}
+                      </span>
+                    </div>
+
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        handleSaveCurrentQueue();
+                      }}
+                      className="flex gap-2"
+                    >
+                      <input
+                        type="text"
+                        value={playlistNameInput}
+                        onChange={(e) => setPlaylistNameInput(e.target.value)}
+                        placeholder="e.g. Chill Synthwave, Gym Hype, Coding Session..."
+                        autoFocus
+                        className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500 font-medium"
+                      />
+                      <button
+                        type="submit"
+                        className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition-all"
+                      >
+                        <Save className="w-3.5 h-3.5" /> Save
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsSavingPlaylist(false)}
+                        className="px-2.5 py-1.5 text-slate-400 hover:text-slate-200 text-xs"
+                      >
+                        Cancel
+                      </button>
+                    </form>
+                    <p className="text-[11px] text-slate-500">
+                      Playlists are saved locally in your browser and will persist across reloads and sessions.
+                    </p>
+                  </div>
+                )}
+
+                {/* VIEW 1: ACTIVE QUEUE */}
+                {playlistTabMode === 'queue' && (
+                  <div>
+                    {queue.length === 0 ? (
+                      <div className="text-center py-10 text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl space-y-2">
+                        <div>Queue is currently empty.</div>
+                        <div className="text-[11px] text-slate-600">
+                          Click "+ Queue" on search results or load one of your saved playlists below!
+                        </div>
+                        {savedPlaylists.length > 0 && (
+                          <button
+                            onClick={() => setPlaylistTabMode('saved')}
+                            className="inline-flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 font-medium mt-1"
+                          >
+                            <ListMusic className="w-3.5 h-3.5" /> View {savedPlaylists.length} Saved Playlists
+                          </button>
+                        )}
                       </div>
-                    ))}
+                    ) : (
+                      <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+                        {queue.map((track, idx) => (
+                          <div
+                            key={idx}
+                            className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 transition-all group"
+                          >
+                            <div className="flex items-center gap-2.5 overflow-hidden">
+                              <span className="text-xs font-mono text-slate-500 w-4">{idx + 1}.</span>
+                              <div className="truncate">
+                                <div className="text-xs font-medium text-slate-200 truncate group-hover:text-indigo-300 transition-colors">
+                                  {track.title}
+                                </div>
+                                <div className="text-[11px] text-slate-500">
+                                  {track.author} • {track.durationFormatted}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => {
+                                  playTrackInStudio(track);
+                                  setQueue((q) => q.filter((_, i) => i !== idx));
+                                }}
+                                className="text-slate-400 hover:text-indigo-400 p-1 rounded hover:bg-slate-800"
+                                title="Play this now"
+                              >
+                                <Play className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => setQueue((q) => q.filter((_, i) => i !== idx))}
+                                className="text-slate-500 hover:text-red-400 p-1 rounded hover:bg-slate-800"
+                                title="Remove from queue"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* VIEW 2: SAVED PLAYLISTS (LOCALSTORAGE) */}
+                {playlistTabMode === 'saved' && (
+                  <div className="space-y-3">
+                    {savedPlaylists.length === 0 ? (
+                      <div className="text-center py-10 text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl space-y-2">
+                        <div>No saved playlists in localStorage yet.</div>
+                        <div className="text-[11px] text-slate-600">
+                          Search for tracks, queue them up, and click "Save Queue" to create your first playlist!
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+                        {savedPlaylists.map((pl) => {
+                          const isPreviewOpen = previewPlaylistId === pl.id;
+                          return (
+                            <div
+                              key={pl.id}
+                              className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80 hover:border-slate-700 space-y-2.5 transition-all"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="overflow-hidden">
+                                  <div className="font-semibold text-xs text-white flex items-center gap-1.5 truncate">
+                                    <ListMusic className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
+                                    <span className="truncate">{pl.name}</span>
+                                  </div>
+                                  <div className="text-[11px] text-slate-500 mt-0.5 font-mono">
+                                    {pl.tracks.length} track{pl.tracks.length !== 1 ? 's' : ''} • Created {new Date(pl.createdAt).toLocaleDateString()}
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-1.5 flex-shrink-0">
+                                  <button
+                                    onClick={() => handlePlayPlaylistNow(pl)}
+                                    className="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium flex items-center gap-1 shadow-sm transition-all"
+                                    title="Play playlist immediately"
+                                  >
+                                    <Play className="w-3 h-3" /> Play
+                                  </button>
+                                  <button
+                                    onClick={() => handleLoadPlaylist(pl, 'replace')}
+                                    className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-medium flex items-center gap-1 transition-all"
+                                    title="Replace active queue with this playlist"
+                                  >
+                                    Load Queue
+                                  </button>
+                                  <button
+                                    onClick={() => handleLoadPlaylist(pl, 'append')}
+                                    className="px-2 py-1 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 rounded-lg text-[11px] transition-all"
+                                    title="Append tracks to existing queue"
+                                  >
+                                    + Append
+                                  </button>
+                                  <button
+                                    onClick={() => setPreviewPlaylistId(isPreviewOpen ? null : pl.id)}
+                                    className="p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-all"
+                                    title="Toggle track list preview"
+                                  >
+                                    <ChevronRight className={`w-3.5 h-3.5 transition-transform ${isPreviewOpen ? 'rotate-90 text-indigo-400' : ''}`} />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeletePlaylist(pl.id, pl.name)}
+                                    className="p-1 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-950/20 transition-all"
+                                    title="Delete playlist"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Expandable Track List Preview */}
+                              {isPreviewOpen && (
+                                <div className="pt-2 border-t border-slate-850 space-y-1.5">
+                                  <div className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
+                                    Tracks in {pl.name}:
+                                  </div>
+                                  <div className="space-y-1 max-h-40 overflow-y-auto">
+                                    {pl.tracks.map((t, tIdx) => (
+                                      <div
+                                        key={tIdx}
+                                        className="flex items-center justify-between text-[11px] p-1.5 rounded-lg bg-slate-900/60"
+                                      >
+                                        <div className="truncate mr-2">
+                                          <span className="text-slate-500 mr-1.5 font-mono">{tIdx + 1}.</span>
+                                          <span className="text-slate-300 font-medium">{t.title}</span>
+                                          <span className="text-slate-500 ml-1.5 text-[10px]">({t.author})</span>
+                                        </div>
+                                        <span className="text-slate-500 font-mono text-[10px] flex-shrink-0">
+                                          {t.durationFormatted}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
