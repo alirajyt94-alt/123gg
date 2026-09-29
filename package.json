@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
+    "prestart": "bash scripts/setup-dependencies.sh || node bot/src/utils/binaryInstaller.js",
     "start": "tsx server.ts",
+    "setup-deps": "bash scripts/setup-dependencies.sh",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit"

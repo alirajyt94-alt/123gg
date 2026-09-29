@@ -45,7 +45,20 @@ import {
   Wifi,
   Package,
   Plus,
-  Folder
+  Folder,
+  Save,
+  ListMusic,
+  Bookmark,
+  FolderHeart,
+  PlayCircle,
+  Battery,
+  Signal,
+  Smartphone,
+  Maximize2,
+  Minimize2,
+  ChevronDown,
+  ChevronUp,
+  Music2
 } from 'lucide-react';
 
 interface BotConfig {
@@ -148,6 +161,13 @@ interface Track {
   views?: number;
 }
 
+interface SavedPlaylist {
+  id: string;
+  name: string;
+  createdAt: number;
+  tracks: Track[];
+}
+
 interface BotLog {
   timestamp: string;
   level: 'info' | 'warn' | 'error';
@@ -161,7 +181,13 @@ interface FileItem {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'studio' | 'commands' | 'code' | 'guide'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'studio' | 'queue' | 'commands' | 'code' | 'guide'>('dashboard');
+  const [studioSubTab, setStudioSubTab] = useState<'player' | 'queue' | 'dsp'>('player');
+  const [viewMode, setViewMode] = useState<'responsive' | 'mobile'>('responsive');
+  const [showCodeDrawer, setShowCodeDrawer] = useState(false);
+  const [botFeedback, setBotFeedback] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+  const [configSaveError, setConfigSaveError] = useState<string | null>(null);
+
   const [status, setStatus] = useState<EngineStatus | null>(null);
   const [logs, setLogs] = useState<BotLog[]>([]);
   const [botToken, setBotToken] = useState('');
@@ -180,6 +206,64 @@ export default function App() {
   const [volume, setVolume] = useState(80);
   const [isMuted, setIsMuted] = useState(false);
   const [loopMode, setLoopMode] = useState<'off' | 'track' | 'queue'>('off');
+
+  // Saved Playlists State (localStorage)
+  const [savedPlaylists, setSavedPlaylists] = useState<SavedPlaylist[]>(() => {
+    try {
+      const stored = localStorage.getItem('groove_saved_playlists');
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch {}
+    return [
+      {
+        id: 'starter-1',
+        name: 'Chill Vibes & Synthwave',
+        createdAt: Date.now() - 86400000,
+        tracks: [
+          {
+            id: 'demo-1',
+            title: 'Blinding Lights',
+            author: 'The Weeknd',
+            duration: 200,
+            durationFormatted: '03:20',
+            url: 'https://www.youtube.com/watch?v=4NRXx6U8ABQ',
+            thumbnail: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=300&auto=format&fit=crop&q=80'
+          },
+          {
+            id: 'demo-2',
+            title: 'Midnight City',
+            author: 'M83',
+            duration: 244,
+            durationFormatted: '04:04',
+            url: 'https://www.youtube.com/watch?v=dX3k_QDnzHE',
+            thumbnail: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=300&auto=format&fit=crop&q=80'
+          }
+        ]
+      },
+      {
+        id: 'starter-2',
+        name: 'Late Night Coding',
+        createdAt: Date.now() - 43200000,
+        tracks: [
+          {
+            id: 'demo-3',
+            title: 'Resonance',
+            author: 'HOME',
+            duration: 212,
+            durationFormatted: '03:32',
+            url: 'https://www.youtube.com/watch?v=8GW6sLrK40k',
+            thumbnail: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300&auto=format&fit=crop&q=80'
+          }
+        ]
+      }
+    ];
+  });
+  const [playlistNameInput, setPlaylistNameInput] = useState('');
+  const [isSavingPlaylist, setIsSavingPlaylist] = useState(false);
+  const [playlistTabMode, setPlaylistTabMode] = useState<'queue' | 'saved'>('queue');
+  const [playlistFeedback, setPlaylistFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [previewPlaylistId, setPreviewPlaylistId] = useState<string | null>(null);
 
   // Lyrics State
   const [lyricsData, setLyricsData] = useState<LyricsData | null>(null);
@@ -297,9 +381,13 @@ export default function App() {
         setConfigSaveSuccess(true);
         setTimeout(() => setConfigSaveSuccess(false), 2500);
         fetchLogs();
+      } else {
+        setConfigSaveError(data.error || 'Failed to save configuration');
+        setTimeout(() => setConfigSaveError(null), 4000);
       }
     } catch (err: any) {
-      alert(`Failed to save config: ${err.message}`);
+      setConfigSaveError(`Failed to save config: ${err.message}`);
+      setTimeout(() => setConfigSaveError(null), 4000);
     } finally {
       setIsSavingConfig(false);
     }
@@ -318,6 +406,34 @@ export default function App() {
       console.error('Benchmark failed:', err);
     } finally {
       setIsRunningBenchmark(false);
+    }
+  };
+
+  const [isInstallingBinaries, setIsInstallingBinaries] = useState(false);
+  const [binaryInstallFeedback, setBinaryInstallFeedback] = useState<string | null>(null);
+
+  const handleAutoInstallBinaries = async (force: boolean = false) => {
+    setIsInstallingBinaries(true);
+    setBinaryInstallFeedback(null);
+    try {
+      const res = await fetch('/api/system/install-binaries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setBinaryInstallFeedback('✓ Audio binaries (yt-dlp & FFmpeg) successfully verified and ready!');
+        fetchStatus();
+        fetchLogs();
+      } else {
+        setBinaryInstallFeedback(`⚠️ Installation alert: ${data.error || 'Check logs for details'}`);
+      }
+    } catch (err: any) {
+      setBinaryInstallFeedback(`Error: ${err.message}`);
+    } finally {
+      setIsInstallingBinaries(false);
+      setTimeout(() => setBinaryInstallFeedback(null), 5000);
     }
   };
 
@@ -478,9 +594,16 @@ export default function App() {
   };
 
   const handleUninstallPackage = async (pkgName: string) => {
-    if (!confirm(`Are you sure you want to uninstall ${pkgName} from bot?`)) return;
-
     try {
+      setTerminalEntries((prev) => [
+        ...prev,
+        {
+          id: 'pkg-uninst-start-' + Date.now(),
+          type: 'cmd',
+          text: `Uninstalling ${pkgName}...`,
+          timestamp: new Date().toLocaleTimeString()
+        }
+      ]);
       const res = await fetch('/api/packages/uninstall', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -498,9 +621,27 @@ export default function App() {
           }
         ]);
         fetchPackagesList();
+      } else {
+        setTerminalEntries((prev) => [
+          ...prev,
+          {
+            id: 'pkg-uninst-err-' + Date.now(),
+            type: 'error',
+            text: `❌ Failed to uninstall ${pkgName}: ${data.error || 'Unknown error'}`,
+            timestamp: new Date().toLocaleTimeString()
+          }
+        ]);
       }
     } catch (err: any) {
-      alert(`Failed to uninstall: ${err.message}`);
+      setTerminalEntries((prev) => [
+        ...prev,
+        {
+          id: 'pkg-uninst-err-' + Date.now(),
+          type: 'error',
+          text: `❌ Error uninstalling ${pkgName}: ${err.message}`,
+          timestamp: new Date().toLocaleTimeString()
+        }
+      ]);
     }
   };
 
@@ -626,9 +767,128 @@ export default function App() {
     }
   };
 
+  // Skip Track Handler
+  const handleSkip = () => {
+    if (queue.length > 0) {
+      const next = queue[0];
+      setQueue(q => q.slice(1));
+      playTrackInStudio(next);
+    } else {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
+      setIsPlaying(false);
+    }
+  };
+
+  // Code Explorer File Select
+  const handleFileSelect = (filePath: string) => {
+    fetchFileContent(filePath);
+  };
+
+  // Playlist Management Handlers (localStorage)
+  const handleSaveCurrentQueue = (nameToSave?: string) => {
+    const finalName = (nameToSave || playlistNameInput).trim();
+    if (!finalName) {
+      setPlaylistFeedback({ type: 'error', message: 'Please enter a name for your playlist.' });
+      setTimeout(() => setPlaylistFeedback(null), 3000);
+      return;
+    }
+
+    const tracksToSave = queue.length > 0 ? [...queue] : (currentTrack ? [currentTrack] : []);
+    if (tracksToSave.length === 0) {
+      setPlaylistFeedback({ type: 'error', message: 'Queue is empty! Search and queue tracks first.' });
+      setTimeout(() => setPlaylistFeedback(null), 3000);
+      return;
+    }
+
+    const newPlaylist: SavedPlaylist = {
+      id: 'pl-' + Date.now(),
+      name: finalName,
+      createdAt: Date.now(),
+      tracks: tracksToSave
+    };
+
+    const updated = [newPlaylist, ...savedPlaylists];
+    setSavedPlaylists(updated);
+    try {
+      localStorage.setItem('groove_saved_playlists', JSON.stringify(updated));
+    } catch (err) {
+      console.error('Error saving to localStorage:', err);
+    }
+
+    setPlaylistNameInput('');
+    setIsSavingPlaylist(false);
+    setPlaylistFeedback({
+      type: 'success',
+      message: `Saved "${finalName}" with ${tracksToSave.length} track${tracksToSave.length > 1 ? 's' : ''}!`
+    });
+    setTimeout(() => setPlaylistFeedback(null), 3500);
+  };
+
+  const handleLoadPlaylist = (playlist: SavedPlaylist, mode: 'replace' | 'append') => {
+    if (!playlist.tracks || playlist.tracks.length === 0) return;
+
+    if (mode === 'replace') {
+      setQueue([...playlist.tracks]);
+      setPlaylistFeedback({
+        type: 'success',
+        message: `Loaded "${playlist.name}" (${playlist.tracks.length} tracks into queue).`
+      });
+    } else {
+      setQueue((prev) => [...prev, ...playlist.tracks]);
+      setPlaylistFeedback({
+        type: 'success',
+        message: `Appended ${playlist.tracks.length} tracks from "${playlist.name}" to queue.`
+      });
+    }
+    setPlaylistTabMode('queue');
+    setTimeout(() => setPlaylistFeedback(null), 3500);
+  };
+
+  const handlePlayPlaylistNow = (playlist: SavedPlaylist) => {
+    if (!playlist.tracks || playlist.tracks.length === 0) return;
+
+    const firstTrack = playlist.tracks[0];
+    const remaining = playlist.tracks.slice(1);
+
+    setQueue(remaining);
+    playTrackInStudio(firstTrack);
+    setPlaylistTabMode('queue');
+    setPlaylistFeedback({
+      type: 'success',
+      message: `Now playing "${playlist.name}" starting with "${firstTrack.title}"!`
+    });
+    setTimeout(() => setPlaylistFeedback(null), 3500);
+  };
+
+  const handleDeletePlaylist = (id: string, name: string) => {
+    const updated = savedPlaylists.filter((p) => p.id !== id);
+    setSavedPlaylists(updated);
+    try {
+      localStorage.setItem('groove_saved_playlists', JSON.stringify(updated));
+    } catch {}
+    setPlaylistFeedback({
+      type: 'success',
+      message: `Deleted playlist "${name}".`
+    });
+    setTimeout(() => setPlaylistFeedback(null), 3000);
+  };
+
   // Start / Stop Bot
   const handleStartBot = async () => {
+    if (!botToken.trim()) {
+      setBotFeedback({
+        type: 'error',
+        message: 'Please enter your Discord Bot Token before launching the bot.'
+      });
+      setTimeout(() => setBotFeedback(null), 5000);
+      return;
+    }
+
     setIsBotStarting(true);
+    setBotFeedback(null);
     try {
       const res = await fetch('/api/bot/start', {
         method: 'POST',
@@ -637,25 +897,46 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) {
-        alert(data.error || 'Failed to start bot');
+        setBotFeedback({
+          type: 'error',
+          message: data.error || 'Failed to start bot'
+        });
       } else {
+        setBotFeedback({
+          type: 'success',
+          message: '✓ Groove Music Bot connected and active!'
+        });
         fetchStatus();
         fetchLogs();
       }
     } catch (err: any) {
-      alert(`Error starting bot: ${err.message}`);
+      setBotFeedback({
+        type: 'error',
+        message: `Error starting bot: ${err.message}`
+      });
     } finally {
       setIsBotStarting(false);
+      setTimeout(() => setBotFeedback(null), 5000);
     }
   };
 
   const handleStopBot = async () => {
     try {
-      await fetch('/api/bot/stop', { method: 'POST' });
+      const res = await fetch('/api/bot/stop', { method: 'POST' });
+      const data = await res.json();
+      setBotFeedback({
+        type: 'info',
+        message: data.message || 'Bot instance stopped.'
+      });
       fetchStatus();
       fetchLogs();
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      setBotFeedback({
+        type: 'error',
+        message: `Error stopping bot: ${err.message}`
+      });
+    } finally {
+      setTimeout(() => setBotFeedback(null), 4000);
     }
   };
 
@@ -768,7 +1049,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
+    <div className="min-h-[100dvh] w-full bg-slate-950 text-slate-100 font-sans selection:bg-indigo-500 selection:text-white flex flex-col items-center justify-start overscroll-none">
       {/* Hidden audio element for browser preview */}
       <audio
         ref={audioRef}
@@ -785,155 +1066,221 @@ export default function App() {
         onPause={() => setIsPlaying(false)}
       />
 
-      {/* Top Navigation Bar */}
-      <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/25 ring-1 ring-white/20">
-              <Disc className="w-6 h-6 text-white animate-spin-slow" />
+      {/* Responsive & Mobile-Optimized Application Shell */}
+      <div className={`w-full ${viewMode === 'mobile' ? 'max-w-md mx-auto sm:border-x sm:border-slate-800/60 sm:shadow-2xl sm:shadow-black' : 'max-w-7xl mx-auto px-2 sm:px-4 lg:px-6'} min-h-[100dvh] bg-slate-950 flex flex-col relative`}>
+
+        {/* Responsive / Mobile Top App Bar */}
+        <header className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-xl border-b border-slate-800/80 px-3.5 py-2.5 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-md shadow-indigo-500/25">
+              <Disc className={`w-4 h-4 text-white ${isPlaying ? 'animate-spin-slow' : ''}`} />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-lg tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white via-indigo-100 to-indigo-400">
-                  Groove Music
-                </span>
-                <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
-                  <Zap className="w-3 h-3" /> yt-dlp & FFmpeg
-                </span>
-                <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-red-500/10 text-red-400 border border-red-500/20">
-                  No Lavalink
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm font-bold text-white tracking-tight">Groove Music</span>
+                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-semibold border ${
+                  status?.bot.online
+                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                    : 'bg-slate-800/80 text-slate-400 border-slate-700/60'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${status?.bot.online ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+                  {status?.bot.online ? 'Online' : 'Standby'}
                 </span>
               </div>
-              <p className="text-xs text-slate-400">High-Performance Discord Audio Streaming</p>
+              <p className="text-[10px] text-slate-400 font-mono">yt-dlp & FFmpeg Native Audio</p>
             </div>
           </div>
 
-          {/* Tab Selector */}
-          <nav className="flex items-center gap-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800/80">
+          {/* Desktop Navigation Tabs (Active in responsive mode on larger displays) */}
+          <div className={`${viewMode === 'mobile' ? 'hidden' : 'hidden md:flex'} items-center gap-1 bg-slate-900/80 p-1 rounded-xl border border-slate-800 text-xs`}>
             <button
               onClick={() => setActiveTab('dashboard')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
-                activeTab === 'dashboard'
-                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              className={`px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+                activeTab === 'dashboard' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
               }`}
             >
-              <Server className="w-3.5 h-3.5" /> Dashboard & Bot
+              <Server className="w-3.5 h-3.5" /> Dashboard
             </button>
             <button
-              onClick={() => setActiveTab('studio')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
-                activeTab === 'studio'
-                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              onClick={() => {
+                setActiveTab('studio');
+                setStudioSubTab('player');
+              }}
+              className={`px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+                activeTab === 'studio' && studioSubTab !== 'queue' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
               }`}
             >
-              <Sliders className="w-3.5 h-3.5" /> Audio Studio & Player
+              <Disc className="w-3.5 h-3.5" /> Studio
+            </button>
+            <button
+              onClick={() => {
+                setActiveTab('studio');
+                setStudioSubTab('queue');
+              }}
+              className={`px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+                activeTab === 'studio' && studioSubTab === 'queue' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <ListMusic className="w-3.5 h-3.5" /> Queue
+              {queue.length > 0 && <span className="px-1 text-[9px] bg-indigo-500 rounded-full">{queue.length}</span>}
             </button>
             <button
               onClick={() => setActiveTab('commands')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
-                activeTab === 'commands'
-                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              className={`px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+                activeTab === 'commands' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
               }`}
             >
-              <Terminal className="w-3.5 h-3.5" /> Console & Terminal
-            </button>
-            <button
-              onClick={() => setActiveTab('code')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
-                activeTab === 'code'
-                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-              }`}
-            >
-              <Code className="w-3.5 h-3.5" /> Codebase Browser
+              <Terminal className="w-3.5 h-3.5" /> Console
             </button>
             <button
               onClick={() => setActiveTab('guide')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
-                activeTab === 'guide'
-                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              className={`px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+                activeTab === 'guide' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
               }`}
             >
-              <BookOpen className="w-3.5 h-3.5" /> Hosting Guide
+              <BookOpen className="w-3.5 h-3.5" /> Guide
             </button>
-          </nav>
+          </div>
 
-          {/* Quick Actions */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            {/* View Mode Switcher */}
+            <button
+              onClick={() => setViewMode(viewMode === 'responsive' ? 'mobile' : 'responsive')}
+              className={`px-2.5 py-1.5 rounded-xl border text-xs font-medium flex items-center gap-1.5 transition-all ${
+                viewMode === 'mobile'
+                  ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/40'
+                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+              }`}
+              title={viewMode === 'responsive' ? 'Switch to Compact Mobile View' : 'Switch to Full Dashboard View'}
+            >
+              <Smartphone className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{viewMode === 'responsive' ? 'Mobile View' : 'Full View'}</span>
+            </button>
+
+            {/* Quick Action: Auto-Verify & Download VPS Binaries */}
+            <button
+              onClick={() => handleAutoInstallBinaries(false)}
+              disabled={isInstallingBinaries}
+              className={`p-2 rounded-xl border text-xs transition-all ${
+                isInstallingBinaries
+                  ? 'bg-amber-500/15 border-amber-500/40 text-amber-400'
+                  : 'bg-slate-900 border-slate-800 text-slate-300 hover:text-indigo-400 active:scale-95'
+              }`}
+              title="Verify & Auto-Download VPS Binaries"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isInstallingBinaries ? 'animate-spin text-amber-400' : ''}`} />
+            </button>
+
+            {/* Quick Action: Code Explorer Drawer */}
+            <button
+              onClick={() => setShowCodeDrawer(!showCodeDrawer)}
+              className={`p-2 rounded-xl border text-xs transition-all ${
+                showCodeDrawer
+                  ? 'bg-indigo-600 text-white border-indigo-500'
+                  : 'bg-slate-900 border-slate-800 text-slate-300 hover:text-indigo-400 active:scale-95'
+              }`}
+              title="View Codebase Explorer"
+            >
+              <Code className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Quick Action: Export ZIP */}
             <a
               href="/api/download-bot"
               download="Groove-Music-Ytdlp-FFmpeg.zip"
-              className="px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-semibold rounded-lg shadow-lg shadow-emerald-600/20 flex items-center gap-1.5 transition-all"
+              className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-emerald-400 active:scale-95 transition-all"
+              title="Export Bot (.ZIP)"
             >
-              <Download className="w-3.5 h-3.5" /> Export Bot (.ZIP)
+              <Download className="w-3.5 h-3.5" />
             </a>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {/* Main Content Body */}
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 py-6">
+        {/* Main Scrollable Content */}
+        <main className={`flex-1 overflow-y-auto overflow-x-hidden no-scrollbar px-3 pt-3 pb-32 space-y-4 ${viewMode === 'mobile' ? '' : 'w-full'}`}>
         {/* TAB 1: DASHBOARD & BOT CONTROLLER */}
         {activeTab === 'dashboard' && (
           <div className="space-y-6">
-            {/* Top Stat Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 flex items-center gap-3">
-                <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${status?.bot.online ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-400'}`}>
-                  <Activity className="w-6 h-6" />
+            {/* Top Stat Cards (2x2 Mobile Grid or 4 across on Desktop) */}
+            <div className={`grid grid-cols-2 ${viewMode === 'mobile' ? '' : 'md:grid-cols-4'} gap-2.5`}>
+              <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-3 flex flex-col justify-between">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] text-slate-400 font-medium">Discord Bot</span>
+                  <span className={`w-2 h-2 rounded-full ${status?.bot.online ? 'bg-emerald-500 animate-pulse' : 'bg-slate-500'}`} />
                 </div>
-                <div>
-                  <div className="text-xs text-slate-400 font-medium">Discord Bot Status</div>
-                  <div className="text-lg font-bold flex items-center gap-2">
-                    <span className={`w-2.5 h-2.5 rounded-full ${status?.bot.online ? 'bg-emerald-500 animate-pulse' : 'bg-slate-500'}`} />
-                    {status?.bot.online ? 'ONLINE' : 'STANDBY'}
-                  </div>
-                  <div className="text-xs text-slate-500">{status?.bot.user?.tag || 'Not Connected'}</div>
+                <div className="text-sm font-bold text-white flex items-center gap-1.5">
+                  {status?.bot.online ? 'ONLINE' : 'STANDBY'}
                 </div>
+                <div className="text-[10px] text-slate-500 truncate mt-0.5">{status?.bot.user?.tag || 'Not Connected'}</div>
               </div>
 
-              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 flex items-center gap-3">
-                <div className="w-12 h-12 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 flex items-center justify-center">
-                  <Zap className="w-6 h-6" />
+              <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-3 flex flex-col justify-between">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] text-slate-400 font-medium">yt-dlp Engine</span>
+                  <Zap className="w-3.5 h-3.5 text-indigo-400" />
                 </div>
-                <div>
-                  <div className="text-xs text-slate-400 font-medium">Audio Extractor</div>
-                  <div className="text-lg font-bold text-indigo-300">yt-dlp Engine</div>
-                  <div className="text-xs text-slate-400 font-mono">v{status?.engine.ytdlpVersion || '2026.08.19'}</div>
-                </div>
+                <div className="text-sm font-bold text-indigo-300">Ready</div>
+                <div className="text-[10px] text-slate-400 font-mono truncate mt-0.5">v{status?.engine.ytdlpVersion || '2026.08.19'}</div>
               </div>
 
-              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 flex items-center gap-3">
-                <div className="w-12 h-12 rounded-xl bg-violet-500/10 text-violet-400 border border-violet-500/20 flex items-center justify-center">
-                  <Sliders className="w-6 h-6" />
+              <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-3 flex flex-col justify-between">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] text-slate-400 font-medium">FFmpeg Core</span>
+                  <Sliders className="w-3.5 h-3.5 text-violet-400" />
                 </div>
-                <div>
-                  <div className="text-xs text-slate-400 font-medium">DSP & Transcoder</div>
-                  <div className="text-lg font-bold text-violet-300">FFmpeg Core</div>
-                  <div className="text-xs text-slate-400 font-mono">v{status?.engine.ffmpegVersion || '4.4.2'}</div>
-                </div>
+                <div className="text-sm font-bold text-violet-300">Active DSP</div>
+                <div className="text-[10px] text-slate-400 font-mono truncate mt-0.5">v{status?.engine.ffmpegVersion || '4.4.2'}</div>
               </div>
 
-              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 flex items-center gap-3">
-                <div className="w-12 h-12 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center justify-center">
-                  <Cpu className="w-6 h-6" />
+              <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-3 flex flex-col justify-between">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] text-slate-400 font-medium">Server RAM</span>
+                  <Cpu className="w-3.5 h-3.5 text-amber-400" />
                 </div>
-                <div>
-                  <div className="text-xs text-slate-400 font-medium">System RAM Usage</div>
-                  <div className="text-lg font-bold text-amber-300">
-                    {status?.system.memory.usedMb || 0} MB / {status?.system.memory.totalMb || 0} MB
-                  </div>
-                  <div className="w-32 bg-slate-800 rounded-full h-1.5 mt-1 overflow-hidden">
-                    <div
-                      className="bg-amber-500 h-1.5 rounded-full"
-                      style={{ width: `${status?.system.memory.usagePercent || 15}%` }}
-                    />
-                  </div>
+                <div className="text-sm font-bold text-amber-300">
+                  {status?.system.memory.usedMb || 0} MB
                 </div>
+                <div className="w-full bg-slate-800 rounded-full h-1 mt-1 overflow-hidden">
+                  <div
+                    className="bg-amber-500 h-1 rounded-full"
+                    style={{ width: `${status?.system.memory.usagePercent || 15}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Auto-Installer Binary Status & VPS Hook Banner */}
+            <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-3.5 px-4 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-slate-200 font-semibold">VPS Auto-Dependency Engine:</span>
+                <span className="text-slate-400">
+                  {status?.engine.ytdlpVersion !== 'Not Installed' && status?.engine.ffmpegVersion !== 'Not Installed'
+                    ? 'yt-dlp & FFmpeg verified and ready for streaming.'
+                    : 'Auto-downloading missing audio binaries in background...'}
+                </span>
+                {binaryInstallFeedback && (
+                  <span className="font-mono text-emerald-400 font-semibold">{binaryInstallFeedback}</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleAutoInstallBinaries(false)}
+                  disabled={isInstallingBinaries}
+                  className="px-3.5 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 transition-all font-medium flex items-center gap-1.5 disabled:opacity-50 text-xs"
+                  title="Verify and auto-download missing binaries"
+                >
+                  {isInstallingBinaries ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                  Verify / Auto-Download Binaries
+                </button>
+                <button
+                  onClick={() => handleAutoInstallBinaries(true)}
+                  disabled={isInstallingBinaries}
+                  className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 transition-all text-xs disabled:opacity-50"
+                  title="Force re-download newest yt-dlp & FFmpeg releases"
+                >
+                  Force Update
+                </button>
               </div>
             </div>
 
@@ -1002,6 +1349,27 @@ export default function App() {
                       </button>
                     )}
                   </div>
+
+                  {botFeedback && (
+                    <div
+                      className={`p-3 rounded-xl text-xs flex items-start gap-2 border animate-fade-in ${
+                        botFeedback.type === 'error'
+                          ? 'bg-rose-500/15 border-rose-500/30 text-rose-300'
+                          : botFeedback.type === 'success'
+                          ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                          : 'bg-indigo-500/15 border-indigo-500/30 text-indigo-300'
+                      }`}
+                    >
+                      {botFeedback.type === 'error' ? (
+                        <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                      ) : botFeedback.type === 'success' ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      ) : (
+                        <Activity className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+                      )}
+                      <span className="leading-snug">{botFeedback.message}</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Quick Architecture Spec */}
@@ -1042,6 +1410,11 @@ export default function App() {
                       {configSaveSuccess && (
                         <span className="text-xs px-2.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1 animate-fade-in font-medium">
                           <Check className="w-3.5 h-3.5" /> Saved & Applied!
+                        </span>
+                      )}
+                      {configSaveError && (
+                        <span className="text-xs px-2.5 py-0.5 rounded bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center gap-1 animate-fade-in font-medium">
+                          <AlertCircle className="w-3.5 h-3.5" /> {configSaveError}
                         </span>
                       )}
                     </div>
@@ -1846,48 +2219,67 @@ export default function App() {
 
         {/* TAB 2: AUDIO STUDIO & INTERACTIVE PLAYER */}
         {activeTab === 'studio' && (
-          <div className="space-y-6">
-            {/* Search & Audio Visualizer Hero */}
-            <div className="bg-gradient-to-br from-slate-900 via-slate-900/90 to-indigo-950/40 border border-slate-800 rounded-3xl p-6 relative overflow-hidden">
-              <div className="max-w-2xl space-y-4 relative z-10">
-                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs font-medium">
-                  <Music className="w-3.5 h-3.5" /> Direct yt-dlp & FFmpeg Audio Stream Tester
-                </div>
-                <h2 className="text-2xl font-bold tracking-tight text-white">
-                  Test Audio Streaming & DSP Filters in Real-Time
-                </h2>
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  Search any song title, artist, or YouTube URL. yt-dlp extracts the audio stream and FFmpeg applies active audio filters (Bassboost, Nightcore, 8D, Vaporwave) right inside your browser!
-                </p>
-
-                {/* Search Bar */}
-                <form onSubmit={handleSearch} className="flex gap-2">
-                  <div className="relative flex-1">
-                    <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
-                    <input
-                      type="text"
-                      placeholder="Search song title or paste YouTube / SoundCloud link..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={isSearching}
-                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs rounded-xl shadow-lg shadow-indigo-600/30 flex items-center gap-2 transition-all disabled:opacity-50"
-                  >
-                    {isSearching ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                    Search
-                  </button>
-                </form>
-              </div>
-
-              {/* Frequency Visualizer Canvas */}
-              <div className="absolute right-6 bottom-4 w-72 h-24 hidden md:block pointer-events-none opacity-80">
-                <canvas ref={canvasRef} width={280} height={90} className="w-full h-full" />
-              </div>
+          <div className="space-y-3.5">
+            {/* Mobile Studio Segmented Sub-Navigation */}
+            <div className="flex bg-slate-900/90 p-1 rounded-2xl border border-slate-800 text-xs font-semibold gap-1">
+              <button
+                onClick={() => setStudioSubTab('player')}
+                className={`flex-1 py-1.5 rounded-xl transition-all flex items-center justify-center gap-1.5 ${
+                  studioSubTab === 'player'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Disc className={`w-3.5 h-3.5 ${isPlaying && studioSubTab === 'player' ? 'animate-spin-slow' : ''}`} />
+                Player
+              </button>
+              <button
+                onClick={() => setStudioSubTab('queue')}
+                className={`flex-1 py-1.5 rounded-xl transition-all flex items-center justify-center gap-1.5 ${
+                  studioSubTab === 'queue'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <ListMusic className="w-3.5 h-3.5" />
+                Queue ({queue.length})
+              </button>
+              <button
+                onClick={() => setStudioSubTab('dsp')}
+                className={`flex-1 py-1.5 rounded-xl transition-all flex items-center justify-center gap-1.5 ${
+                  studioSubTab === 'dsp'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Sliders className="w-3.5 h-3.5" />
+                DSP FX
+              </button>
             </div>
+
+            {/* Fast Search Input Bar (Visible in Player & Queue) */}
+            {(studioSubTab === 'queue' || !currentTrack) && (
+              <form onSubmit={handleSearch} className="flex gap-2">
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                  <input
+                    type="text"
+                    placeholder="Search song, artist, YouTube URL..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full bg-slate-900/90 border border-slate-800 rounded-xl pl-9 pr-3 py-2.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={isSearching}
+                  className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs rounded-xl shadow-lg shadow-indigo-600/30 flex items-center gap-1.5 transition-all disabled:opacity-50"
+                >
+                  {isSearching ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                  Search
+                </button>
+              </form>
+            )}
 
             {/* Active Track Player & Filter Controls */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -2157,50 +2549,288 @@ export default function App() {
                 )}
               </div>
 
-              {/* Simulated Queue */}
+              {/* Up Next Queue & Saved Playlists Hub */}
               <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold flex items-center gap-2">
-                    <Disc className="w-4 h-4 text-indigo-400" />
-                    Up Next Queue ({queue.length})
-                  </h3>
-                  {queue.length > 0 && (
+                {/* Header & Mode Switcher */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-800/80">
+                  <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
                     <button
-                      onClick={() => setQueue([])}
-                      className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1"
+                      onClick={() => setPlaylistTabMode('queue')}
+                      className={`px-3 py-1 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+                        playlistTabMode === 'queue'
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
                     >
-                      <Trash2 className="w-3 h-3" /> Clear Queue
+                      <Disc className="w-3.5 h-3.5" />
+                      Queue ({queue.length})
                     </button>
-                  )}
+                    <button
+                      onClick={() => setPlaylistTabMode('saved')}
+                      className={`px-3 py-1 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+                        playlistTabMode === 'saved'
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <ListMusic className="w-3.5 h-3.5" />
+                      Saved Playlists ({savedPlaylists.length})
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => setIsSavingPlaylist(!isSavingPlaylist)}
+                      className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-all flex items-center gap-1 ${
+                        isSavingPlaylist
+                          ? 'bg-indigo-600 text-white border-indigo-500'
+                          : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700'
+                      }`}
+                      title="Save current queue as a named playlist in localStorage"
+                    >
+                      <Bookmark className="w-3.5 h-3.5 text-amber-400" />
+                      Save Queue
+                    </button>
+
+                    {playlistTabMode === 'queue' && queue.length > 0 && (
+                      <button
+                        onClick={() => setQueue([])}
+                        className="text-xs text-red-400 hover:text-red-300 px-2 py-1 rounded-lg hover:bg-red-950/20 flex items-center gap-1 transition-all"
+                      >
+                        <Trash2 className="w-3 h-3" /> Clear
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                {queue.length === 0 ? (
-                  <div className="text-center py-10 text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl">
-                    Queue is empty. Click "+ Queue" on any track to add it!
+                {/* Playlist Action Feedback Toast */}
+                {playlistFeedback && (
+                  <div
+                    className={`p-2.5 rounded-xl text-xs flex items-center gap-2 animate-fade-in ${
+                      playlistFeedback.type === 'success'
+                        ? 'bg-emerald-950/40 border border-emerald-800/80 text-emerald-300'
+                        : 'bg-red-950/40 border border-red-800/80 text-red-300'
+                    }`}
+                  >
+                    {playlistFeedback.type === 'success' ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
+                    )}
+                    <span>{playlistFeedback.message}</span>
                   </div>
-                ) : (
-                  <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
-                    {queue.map((track, idx) => (
-                      <div
-                        key={idx}
-                        className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80"
-                      >
-                        <div className="flex items-center gap-2.5 overflow-hidden">
-                          <span className="text-xs font-mono text-slate-500 w-4">{idx + 1}.</span>
-                          <div className="truncate">
-                            <div className="text-xs font-medium text-slate-200 truncate">{track.title}</div>
-                            <div className="text-[11px] text-slate-500">{track.author} • {track.durationFormatted}</div>
-                          </div>
-                        </div>
+                )}
 
-                        <button
-                          onClick={() => setQueue((q) => q.filter((_, i) => i !== idx))}
-                          className="text-slate-500 hover:text-red-400 p-1"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                {/* Inline Save Queue as Playlist Drawer */}
+                {isSavingPlaylist && (
+                  <div className="p-3.5 rounded-xl bg-slate-950/80 border border-indigo-500/30 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-white flex items-center gap-1.5">
+                        <Save className="w-3.5 h-3.5 text-indigo-400" />
+                        Save Current Queue to LocalStorage
+                      </span>
+                      <span className="text-[11px] text-slate-500 font-mono">
+                        {queue.length > 0 ? `${queue.length} track(s) in queue` : (currentTrack ? '1 active track' : 'Empty')}
+                      </span>
+                    </div>
+
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        handleSaveCurrentQueue();
+                      }}
+                      className="flex gap-2"
+                    >
+                      <input
+                        type="text"
+                        value={playlistNameInput}
+                        onChange={(e) => setPlaylistNameInput(e.target.value)}
+                        placeholder="e.g. Chill Synthwave, Gym Hype, Coding Session..."
+                        autoFocus
+                        className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500 font-medium"
+                      />
+                      <button
+                        type="submit"
+                        className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition-all"
+                      >
+                        <Save className="w-3.5 h-3.5" /> Save
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsSavingPlaylist(false)}
+                        className="px-2.5 py-1.5 text-slate-400 hover:text-slate-200 text-xs"
+                      >
+                        Cancel
+                      </button>
+                    </form>
+                    <p className="text-[11px] text-slate-500">
+                      Playlists are saved locally in your browser and will persist across reloads and sessions.
+                    </p>
+                  </div>
+                )}
+
+                {/* VIEW 1: ACTIVE QUEUE */}
+                {playlistTabMode === 'queue' && (
+                  <div>
+                    {queue.length === 0 ? (
+                      <div className="text-center py-10 text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl space-y-2">
+                        <div>Queue is currently empty.</div>
+                        <div className="text-[11px] text-slate-600">
+                          Click "+ Queue" on search results or load one of your saved playlists below!
+                        </div>
+                        {savedPlaylists.length > 0 && (
+                          <button
+                            onClick={() => setPlaylistTabMode('saved')}
+                            className="inline-flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 font-medium mt-1"
+                          >
+                            <ListMusic className="w-3.5 h-3.5" /> View {savedPlaylists.length} Saved Playlists
+                          </button>
+                        )}
                       </div>
-                    ))}
+                    ) : (
+                      <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+                        {queue.map((track, idx) => (
+                          <div
+                            key={idx}
+                            className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 transition-all group"
+                          >
+                            <div className="flex items-center gap-2.5 overflow-hidden">
+                              <span className="text-xs font-mono text-slate-500 w-4">{idx + 1}.</span>
+                              <div className="truncate">
+                                <div className="text-xs font-medium text-slate-200 truncate group-hover:text-indigo-300 transition-colors">
+                                  {track.title}
+                                </div>
+                                <div className="text-[11px] text-slate-500">
+                                  {track.author} • {track.durationFormatted}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => {
+                                  playTrackInStudio(track);
+                                  setQueue((q) => q.filter((_, i) => i !== idx));
+                                }}
+                                className="text-slate-400 hover:text-indigo-400 p-1 rounded hover:bg-slate-800"
+                                title="Play this now"
+                              >
+                                <Play className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => setQueue((q) => q.filter((_, i) => i !== idx))}
+                                className="text-slate-500 hover:text-red-400 p-1 rounded hover:bg-slate-800"
+                                title="Remove from queue"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* VIEW 2: SAVED PLAYLISTS (LOCALSTORAGE) */}
+                {playlistTabMode === 'saved' && (
+                  <div className="space-y-3">
+                    {savedPlaylists.length === 0 ? (
+                      <div className="text-center py-10 text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl space-y-2">
+                        <div>No saved playlists in localStorage yet.</div>
+                        <div className="text-[11px] text-slate-600">
+                          Search for tracks, queue them up, and click "Save Queue" to create your first playlist!
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+                        {savedPlaylists.map((pl) => {
+                          const isPreviewOpen = previewPlaylistId === pl.id;
+                          return (
+                            <div
+                              key={pl.id}
+                              className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80 hover:border-slate-700 space-y-2.5 transition-all"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="overflow-hidden">
+                                  <div className="font-semibold text-xs text-white flex items-center gap-1.5 truncate">
+                                    <ListMusic className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
+                                    <span className="truncate">{pl.name}</span>
+                                  </div>
+                                  <div className="text-[11px] text-slate-500 mt-0.5 font-mono">
+                                    {pl.tracks.length} track{pl.tracks.length !== 1 ? 's' : ''} • Created {new Date(pl.createdAt).toLocaleDateString()}
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-1.5 flex-shrink-0">
+                                  <button
+                                    onClick={() => handlePlayPlaylistNow(pl)}
+                                    className="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium flex items-center gap-1 shadow-sm transition-all"
+                                    title="Play playlist immediately"
+                                  >
+                                    <Play className="w-3 h-3" /> Play
+                                  </button>
+                                  <button
+                                    onClick={() => handleLoadPlaylist(pl, 'replace')}
+                                    className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-medium flex items-center gap-1 transition-all"
+                                    title="Replace active queue with this playlist"
+                                  >
+                                    Load Queue
+                                  </button>
+                                  <button
+                                    onClick={() => handleLoadPlaylist(pl, 'append')}
+                                    className="px-2 py-1 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 rounded-lg text-[11px] transition-all"
+                                    title="Append tracks to existing queue"
+                                  >
+                                    + Append
+                                  </button>
+                                  <button
+                                    onClick={() => setPreviewPlaylistId(isPreviewOpen ? null : pl.id)}
+                                    className="p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-all"
+                                    title="Toggle track list preview"
+                                  >
+                                    <ChevronRight className={`w-3.5 h-3.5 transition-transform ${isPreviewOpen ? 'rotate-90 text-indigo-400' : ''}`} />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeletePlaylist(pl.id, pl.name)}
+                                    className="p-1 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-950/20 transition-all"
+                                    title="Delete playlist"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Expandable Track List Preview */}
+                              {isPreviewOpen && (
+                                <div className="pt-2 border-t border-slate-850 space-y-1.5">
+                                  <div className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
+                                    Tracks in {pl.name}:
+                                  </div>
+                                  <div className="space-y-1 max-h-40 overflow-y-auto">
+                                    {pl.tracks.map((t, tIdx) => (
+                                      <div
+                                        key={tIdx}
+                                        className="flex items-center justify-between text-[11px] p-1.5 rounded-lg bg-slate-900/60"
+                                      >
+                                        <div className="truncate mr-2">
+                                          <span className="text-slate-500 mr-1.5 font-mono">{tIdx + 1}.</span>
+                                          <span className="text-slate-300 font-medium">{t.title}</span>
+                                          <span className="text-slate-500 ml-1.5 text-[10px]">({t.author})</span>
+                                        </div>
+                                        <span className="text-slate-500 font-mono text-[10px] flex-shrink-0">
+                                          {t.durationFormatted}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -2983,36 +3613,83 @@ export default function App() {
               </p>
             </div>
 
-            {/* Step 1: System Packages */}
+            {/* Step 1: System Packages & Auto-Installer */}
             <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 space-y-4">
-              <div className="flex items-center gap-2 font-semibold text-sm text-indigo-300">
-                <span className="w-6 h-6 rounded-full bg-indigo-600/30 text-indigo-400 flex items-center justify-center text-xs">1</span>
-                Install FFmpeg and yt-dlp on Your Server
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 font-semibold text-sm text-indigo-300">
+                  <span className="w-6 h-6 rounded-full bg-indigo-600/30 text-indigo-400 flex items-center justify-center text-xs">1</span>
+                  Automatic VPS Dependencies & Audio Engine Setup
+                </div>
+                <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-medium">
+                  Auto-Downloads Automatically
+                </span>
               </div>
 
+              <p className="text-xs text-slate-300 leading-relaxed">
+                You never need to manually wrestle with installing yt-dlp or FFmpeg on your VPS again! The system has two built-in layers that automatically detect and download all required static binaries for your server architecture (Linux x64, ARM64, Raspberry Pi, macOS, or Windows):
+              </p>
+
+              {/* Automatic Web Online & Startup Hook */}
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                <div className="font-semibold text-xs text-indigo-300 flex items-center gap-2">
+                  <Zap className="w-3.5 h-3.5 text-amber-400" />
+                  Method 1: Automatic Download On Web / Bot Startup (Zero Configuration)
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  As soon as the web dashboard comes online or <code className="text-emerald-400">node index.js</code> executes, the app automatically checks if <code className="text-slate-200 font-mono">yt-dlp</code> and <code className="text-slate-200 font-mono">ffmpeg</code> exist. If missing, it immediately downloads high-performance static binaries to <code className="text-slate-200 font-mono">./bin</code> and configures PATH on the fly!
+                </p>
+              </div>
+
+              {/* Shell Script Setup Hook */}
               <div className="space-y-3 text-xs">
                 <div>
-                  <div className="text-slate-400 mb-1 font-medium">Ubuntu / Debian:</div>
+                  <div className="text-slate-300 font-medium mb-1">Method 2: Run the All-In-One VPS Dependency Script:</div>
                   <pre className="bg-slate-950 p-3 rounded-xl border border-slate-800 font-mono text-emerald-400 overflow-x-auto">
-{`# 1. Install FFmpeg
-sudo apt update && sudo apt install -y ffmpeg
+{`# 1. Run the universal multi-distro dependency setup script
+bash scripts/setup-dependencies.sh
 
-# 2. Install latest yt-dlp binary
-sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
-sudo chmod a+rx /usr/local/bin/yt-dlp
-
-# 3. Verify installations
-ffmpeg -version
-yt-dlp --version`}
+# It automatically detects apt (Ubuntu/Debian), dnf/yum (CentOS/Fedora/Rocky),
+# pacman (Arch), apk (Alpine), or brew (macOS) and installs FFmpeg & yt-dlp!`}
                   </pre>
                 </div>
 
                 <div>
-                  <div className="text-slate-400 mb-1 font-medium">Windows (PowerShell):</div>
-                  <pre className="bg-slate-950 p-3 rounded-xl border border-slate-800 font-mono text-emerald-400 overflow-x-auto">
-{`winget install Gyan.FFmpeg
-winget install yt-dlp`}
-                  </pre>
+                  <div className="text-slate-300 font-medium mb-1">How to Set as a Startup Hook on Your VPS:</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
+                    <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-850 space-y-1.5">
+                      <div className="font-semibold text-indigo-300 text-xs">Option A: Systemd Startup Service</div>
+                      <p className="text-[11px] text-slate-400">Create <code className="text-slate-300">/etc/systemd/system/groove-deps.service</code>:</p>
+                      <pre className="text-[10px] bg-slate-900 p-2 rounded text-slate-300 font-mono overflow-x-auto">
+{`[Unit]
+Description=Groove Audio Deps
+Before=groove-bot.service
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/your-bot
+ExecStart=/bin/bash scripts/setup-dependencies.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target`}
+                      </pre>
+                      <p className="text-[10px] text-slate-500">Run: <code className="text-emerald-400">sudo systemctl enable --now groove-deps</code></p>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-850 space-y-1.5">
+                      <div className="font-semibold text-indigo-300 text-xs">Option B: Crontab / PM2 Startup Hook</div>
+                      <p className="text-[11px] text-slate-400">Automatically run on system reboot:</p>
+                      <pre className="text-[10px] bg-slate-900 p-2 rounded text-slate-300 font-mono overflow-x-auto">
+{`# In crontab (crontab -e):
+@reboot /bin/bash /path/to/bot/scripts/setup-dependencies.sh
+
+# Or with PM2:
+pm2 start "bash scripts/setup-dependencies.sh && npm start" --name groove-music`}
+                      </pre>
+                      <p className="text-[10px] text-slate-500">Also included as <code className="text-emerald-400">npm run setup-deps</code> in package.json</p>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -3057,10 +3734,208 @@ pm2 start index.js --name "groove-music"`}
         )}
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-slate-800 bg-slate-900/60 py-4 px-4 text-center text-xs text-slate-500">
-        Groove Music Bot • Native yt-dlp & FFmpeg Audio Engine (Zero Lavalink Architecture) • Ready for Production
-      </footer>
+      {/* Floating Mini Player (Active during streaming on other tabs) */}
+      {currentTrack && activeTab !== 'studio' && (
+        <div className={`fixed sm:absolute bottom-[66px] left-2.5 right-2.5 ${viewMode === 'mobile' ? 'max-w-[428px]' : 'max-w-xl md:bottom-4'} mx-auto z-40 animate-slide-up`}>
+          <div
+            onClick={() => {
+              setActiveTab('studio');
+              setStudioSubTab('player');
+            }}
+            className="bg-slate-900/95 backdrop-blur-xl border border-indigo-500/40 rounded-2xl p-2.5 shadow-2xl flex items-center justify-between gap-3 cursor-pointer group active:scale-[0.99] transition-transform"
+          >
+            <div className="flex items-center gap-2.5 overflow-hidden">
+              {currentTrack.thumbnail ? (
+                <img src={currentTrack.thumbnail} alt="" className="w-9 h-9 rounded-xl object-cover shrink-0" />
+              ) : (
+                <div className="w-9 h-9 rounded-xl bg-indigo-600/30 flex items-center justify-center shrink-0">
+                  <Disc className="w-5 h-5 text-indigo-400 animate-spin-slow" />
+                </div>
+              )}
+              <div className="truncate">
+                <div className="text-xs font-semibold text-white truncate">{currentTrack.title}</div>
+                <div className="text-[10px] text-slate-400 truncate flex items-center gap-1.5">
+                  <span>{currentTrack.author}</span>
+                  <span>•</span>
+                  <span className="text-indigo-400 font-mono">{currentTrack.durationFormatted}</span>
+                  {selectedFilter !== 'clear' && (
+                    <span className="px-1 py-0.2 rounded bg-indigo-950 text-indigo-300 font-mono text-[9px] border border-indigo-800">
+                      {selectedFilter}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+              <button
+                onClick={() => {
+                  if (isPlaying) {
+                    audioRef.current?.pause();
+                    setIsPlaying(false);
+                  } else {
+                    audioRef.current?.play();
+                    setIsPlaying(true);
+                  }
+                }}
+                className="p-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-500 active:scale-95 transition-all"
+                title="Toggle Playback"
+              >
+                {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+              </button>
+              {queue.length > 0 && (
+                <button
+                  onClick={() => handleSkip()}
+                  className="p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white active:scale-95 transition-all"
+                  title="Skip"
+                >
+                  <SkipForward className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bottom Mobile Tab Navigation Bar (Dock) */}
+      <nav className={`${viewMode === 'responsive' ? 'md:hidden' : ''} sticky bottom-0 z-40 bg-slate-950/95 backdrop-blur-xl border-t border-slate-800/80 px-2 pt-1 pb-safe shrink-0`}>
+        <div className="grid grid-cols-5 gap-0.5">
+          {/* Tab 1: Dashboard / Home */}
+          <button
+            onClick={() => setActiveTab('dashboard')}
+            className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl transition-all ${
+              activeTab === 'dashboard'
+                ? 'text-indigo-400 font-semibold'
+                : 'text-slate-500 hover:text-slate-300'
+            }`}
+          >
+            <Server className={`w-4 h-4 mb-0.5 transition-transform ${activeTab === 'dashboard' ? 'scale-110 text-indigo-400' : ''}`} />
+            <span className="text-[10px]">Home</span>
+          </button>
+
+          {/* Tab 2: Player */}
+          <button
+            onClick={() => {
+              setActiveTab('studio');
+              setStudioSubTab('player');
+            }}
+            className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl transition-all ${
+              activeTab === 'studio' && studioSubTab !== 'queue'
+                ? 'text-indigo-400 font-semibold'
+                : 'text-slate-500 hover:text-slate-300'
+            }`}
+          >
+            <Disc className={`w-4 h-4 mb-0.5 transition-transform ${activeTab === 'studio' && studioSubTab !== 'queue' ? 'scale-110 text-indigo-400' : ''} ${isPlaying ? 'animate-spin-slow' : ''}`} />
+            <span className="text-[10px]">Player</span>
+          </button>
+
+          {/* Tab 3: Queue */}
+          <button
+            onClick={() => {
+              setActiveTab('studio');
+              setStudioSubTab('queue');
+            }}
+            className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl relative transition-all ${
+              activeTab === 'studio' && studioSubTab === 'queue'
+                ? 'text-indigo-400 font-semibold'
+                : 'text-slate-500 hover:text-slate-300'
+            }`}
+          >
+            <div className="relative">
+              <ListMusic className={`w-4 h-4 mb-0.5 transition-transform ${activeTab === 'studio' && studioSubTab === 'queue' ? 'scale-110 text-indigo-400' : ''}`} />
+              {queue.length > 0 && (
+                <span className="absolute -top-1 -right-2 px-1 text-[8px] font-bold bg-indigo-600 text-white rounded-full">
+                  {queue.length}
+                </span>
+              )}
+            </div>
+            <span className="text-[10px]">Queue</span>
+          </button>
+
+          {/* Tab 4: Console */}
+          <button
+            onClick={() => setActiveTab('commands')}
+            className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl transition-all ${
+              activeTab === 'commands'
+                ? 'text-indigo-400 font-semibold'
+                : 'text-slate-500 hover:text-slate-300'
+            }`}
+          >
+            <Terminal className={`w-4 h-4 mb-0.5 transition-transform ${activeTab === 'commands' ? 'scale-110 text-indigo-400' : ''}`} />
+            <span className="text-[10px]">Console</span>
+          </button>
+
+          {/* Tab 5: Guide */}
+          <button
+            onClick={() => setActiveTab('guide')}
+            className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl transition-all ${
+              activeTab === 'guide'
+                ? 'text-indigo-400 font-semibold'
+                : 'text-slate-500 hover:text-slate-300'
+            }`}
+          >
+            <BookOpen className={`w-4 h-4 mb-0.5 transition-transform ${activeTab === 'guide' ? 'scale-110 text-indigo-400' : ''}`} />
+            <span className="text-[10px]">Guide</span>
+          </button>
+        </div>
+
+        {/* iOS / Android Gesture Home Bar */}
+        <div className="w-24 h-1 bg-slate-800/80 rounded-full mx-auto mt-1.5 mb-0.5" />
+      </nav>
+
+      {/* Mobile Codebase Explorer Drawer / Bottom Sheet */}
+      {showCodeDrawer && (
+        <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col justify-end animate-fade-in">
+          <div className="bg-slate-900 border-t border-slate-800 rounded-t-3xl max-h-[85%] flex flex-col p-4 space-y-3">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+              <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                <Code className="w-4 h-4 text-indigo-400" />
+                Bot Codebase Explorer
+              </span>
+              <button
+                onClick={() => setShowCodeDrawer(false)}
+                className="p-1.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white text-xs font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Mobile File Selector */}
+            <div className="flex gap-2">
+              <select
+                value={selectedFile}
+                onChange={(e) => handleFileSelect(e.target.value)}
+                className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-indigo-300 focus:outline-none"
+              >
+                {fileList.map((f) => (
+                  <option key={f.path} value={f.path}>
+                    {f.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(fileContent);
+                  setCopiedCode(true);
+                  setTimeout(() => setCopiedCode(false), 2000);
+                }}
+                className="px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs flex items-center gap-1"
+              >
+                {copiedCode ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                {copiedCode ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+
+            {/* Code Viewer */}
+            <div className="flex-1 bg-slate-950 rounded-xl p-3 overflow-auto max-h-80 border border-slate-800">
+              <pre className="text-[11px] font-mono text-slate-300 leading-relaxed overflow-x-auto">
+                <code>{fileContent || '// Select a file above to inspect'}</code>
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
-  );
+  </div>
+);
 }

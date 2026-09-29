@@ -137,7 +137,18 @@ export class Player extends EventEmitter {
       console.error('[Player Play Error]:', err);
       this.emit('playerError', this, err);
       this.manager.emit('playerError', this, err);
-      this.skip();
+
+      // Disable track loop on broken track to prevent infinite retry loop
+      if (this.loop === 'track') {
+        this.loop = 'off';
+      }
+
+      this.current = null;
+      if (this.queue.length > 0) {
+        this.play();
+      } else {
+        this.audioPlayer.stop(true);
+      }
       return false;
     }
   }
@@ -257,6 +268,9 @@ export class Player extends EventEmitter {
   cleanupCurrentProcess() {
     if (this.currentProcess) {
       try {
+        if (this.currentProcess.stdout) {
+          this.currentProcess.stdout.destroy();
+        }
         this.currentProcess.kill('SIGKILL');
       } catch {}
       this.currentProcess = null;

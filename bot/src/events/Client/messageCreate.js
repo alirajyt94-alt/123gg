@@ -25,14 +25,15 @@ export default async function messageCreate(client, message) {
   if (!command) return;
 
   // Bot permissions check
-  const botPermissions = message.channel.permissionsFor(message.guild.members.me);
+  const me = message.guild.members.me || await message.guild.members.fetchMe().catch(() => null);
+  const botPermissions = me ? message.channel.permissionsFor(me) : null;
   if (!botPermissions || !botPermissions.has([PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.EmbedLinks])) {
     return;
   }
 
   // Voice requirement check for music commands
   if (command.category === 'Music' || command.category === 'Filters') {
-    if (!message.member.voice.channel) {
+    if (!message.member?.voice?.channel) {
       return message.reply({
         embeds: [
           client.embed({
@@ -43,7 +44,7 @@ export default async function messageCreate(client, message) {
       });
     }
 
-    if (message.guild.members.me.voice.channel && message.guild.members.me.voice.channel.id !== message.member.voice.channel.id) {
+    if (me?.voice?.channel && me.voice.channel.id !== message.member.voice.channel.id) {
       return message.reply({
         embeds: [
           client.embed({

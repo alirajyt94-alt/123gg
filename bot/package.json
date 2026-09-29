@@ -3,8 +3,11 @@
   "version": "2.0.0",
   "description": "High-performance Discord Music Bot powered by yt-dlp & FFmpeg with native voice streaming (Zero Lavalink dependencies)",
   "main": "index.js",
+  "type": "module",
   "scripts": {
+    "prestart": "bash scripts/setup-dependencies.sh || node src/utils/binaryInstaller.js",
     "start": "node index.js",
+    "setup-deps": "bash scripts/setup-dependencies.sh",
     "shard": "node Shard.js"
   },
   "keywords": [

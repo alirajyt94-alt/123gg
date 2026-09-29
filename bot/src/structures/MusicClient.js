@@ -50,13 +50,32 @@ export class MusicClient extends Client {
       .setColor(options.color || this.config.embedColor || '#6366f1')
       .setTimestamp();
 
-    if (options.title) embed.setTitle(options.title);
-    if (options.description) embed.setDescription(options.description);
-    if (options.footer) embed.setFooter(options.footer);
-    if (options.thumbnail) embed.setThumbnail(options.thumbnail);
-    if (options.image) embed.setImage(options.image);
-    if (options.author) embed.setAuthor(options.author);
-    if (options.fields) embed.addFields(options.fields);
+    if (options.title) embed.setTitle(String(options.title).slice(0, 256));
+    if (options.description) embed.setDescription(String(options.description).slice(0, 4096));
+    if (options.footer) {
+      embed.setFooter(typeof options.footer === 'string' ? { text: options.footer } : options.footer);
+    }
+    if (options.thumbnail) {
+      embed.setThumbnail(typeof options.thumbnail === 'string' ? options.thumbnail : options.thumbnail.url);
+    }
+    if (options.image) {
+      embed.setImage(typeof options.image === 'string' ? options.image : options.image.url);
+    }
+    if (options.author) {
+      embed.setAuthor(typeof options.author === 'string' ? { name: options.author } : options.author);
+    }
+    if (options.fields && Array.isArray(options.fields)) {
+      const sanitizedFields = options.fields
+        .filter(f => f && f.name)
+        .map(f => ({
+          name: String(f.name).slice(0, 256),
+          value: String(f.value || 'N/A').slice(0, 1024),
+          inline: Boolean(f.inline)
+        }));
+      if (sanitizedFields.length > 0) {
+        embed.addFields(sanitizedFields);
+      }
+    }
 
     return embed;
   }

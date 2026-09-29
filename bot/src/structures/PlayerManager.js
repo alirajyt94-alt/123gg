@@ -57,6 +57,26 @@ export class PlayerManager extends EventEmitter {
       throw new Error(`Failed to join voice channel within 15 seconds: ${err.message}`);
     }
 
+    // Auto-cleanup on disconnect or channel kicked
+    voiceConnection.on(VoiceConnectionStatus.Disconnected, async () => {
+      try {
+        await Promise.race([
+          entersState(voiceConnection, VoiceConnectionStatus.Signalling, 5_000),
+          entersState(voiceConnection, VoiceConnectionStatus.Connecting, 5_000),
+        ]);
+      } catch {
+        if (this.players.has(guildId)) {
+          this.destroy(guildId);
+        }
+      }
+    });
+
+    voiceConnection.on(VoiceConnectionStatus.Destroyed, () => {
+      if (this.players.has(guildId)) {
+        this.destroy(guildId);
+      }
+    });
+
     const player = new Player(this, {
       guildId,
       voiceChannelId,

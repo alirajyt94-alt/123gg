@@ -11,6 +11,7 @@ import dotenv from 'dotenv';
 import { YtdlpFFmpegEngine, AUDIO_FILTERS } from './bot/src/structures/YtdlpFFmpegEngine.js';
 import { MusicClient } from './bot/src/structures/MusicClient.js';
 import { lyricsService } from './bot/src/utils/lyricsService.js';
+import { ensureBinaries, findBinary, testBinary, getBinDir } from './bot/src/utils/binaryInstaller.js';
 
 dotenv.config();
 
@@ -46,12 +47,19 @@ app.get('/api/engine/status', (req: Request, res: Response) => {
   let ytdlpVersion = 'Not Installed';
   let ffmpegVersion = 'Not Installed';
 
+  const ytdlpBin = findBinary('yt-dlp') || 'yt-dlp';
+  const ffmpegBin = findBinary('ffmpeg') || 'ffmpeg';
+
   try {
-    ytdlpVersion = execSync('yt-dlp --version', { timeout: 3000 }).toString().trim();
+    const rawYt = testBinary(ytdlpBin, '--version');
+    if (rawYt) ytdlpVersion = rawYt;
   } catch {}
 
   try {
-    ffmpegVersion = execSync('ffmpeg -version', { timeout: 3000 }).toString().split('\n')[0].replace('ffmpeg version ', '').split(' ')[0];
+    const rawFf = testBinary(ffmpegBin, '-version') || '';
+    if (rawFf) {
+      ffmpegVersion = rawFf.split('\n')[0].replace('ffmpeg version ', '').split(' ')[0] || 'Installed';
+    }
   } catch {}
 
   const totalMem = Math.round(os.totalmem() / 1024 / 1024);
@@ -63,6 +71,8 @@ app.get('/api/engine/status', (req: Request, res: Response) => {
       type: 'yt-dlp + FFmpeg',
       ytdlpVersion,
       ffmpegVersion,
+      ytdlpPath: ytdlpBin,
+      ffmpegPath: ffmpegBin,
       lavalinkRemoved: true,
       audioFormats: ['s16le', 'opus', 'mp3', 'wav'],
       filtersAvailable: Object.keys(AUDIO_FILTERS)
@@ -86,6 +96,26 @@ app.get('/api/engine/status', (req: Request, res: Response) => {
       ping: activeBot?.ws ? Math.round(activeBot.ws.ping) : 0
     }
   });
+});
+
+// Automatic VPS Binary Download & Verification Endpoint
+app.post('/api/system/install-binaries', async (req: Request, res: Response) => {
+  const force = req.body.force === true;
+  addLog('info', `[Auto-Installer] Manual binary verification & setup triggered (force=${force})...`);
+
+  try {
+    const result = await ensureBinaries({
+      force,
+      onProgress: (msg: string) => addLog('info', msg)
+    });
+    res.json({
+      success: result.success,
+      result
+    });
+  } catch (err: any) {
+    addLog('error', `[Auto-Installer] Error ensuring binaries: ${err.message}`);
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // 2. yt-dlp Music Search API
@@ -714,6 +744,18 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Dashboard] Groove Music Server running on http://0.0.0.0:${PORT}`);
+    addLog('info', `Web dashboard is online on port ${PORT}`);
+
+    // Auto-download and verify yt-dlp & FFmpeg as soon as the web dashboard is online
+    ensureBinaries({
+      onProgress: (msg: string) => {
+        console.log(msg);
+        addLog('info', msg);
+      }
+    }).catch((err: any) => {
+      console.warn('[Auto-Installer Warning]:', err.message);
+      addLog('warn', `Binary auto-check warning: ${err.message}`);
+    });
   });
 }
 

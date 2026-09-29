@@ -47,6 +47,11 @@ export class YtdlpFFmpegEngine {
       let stdout = '';
       let stderr = '';
 
+      const timeout = setTimeout(() => {
+        try { proc.kill('SIGKILL'); } catch {}
+        resolve([]);
+      }, 15000);
+
       proc.stdout.on('data', (chunk) => {
         stdout += chunk.toString();
       });
@@ -56,6 +61,7 @@ export class YtdlpFFmpegEngine {
       });
 
       proc.on('close', (code) => {
+        clearTimeout(timeout);
         if (code !== 0 && !stdout.trim()) {
           return resolve([]);
         }
@@ -159,6 +165,11 @@ export class YtdlpFFmpegEngine {
           console.error('[FFmpeg Process Error]', err);
         });
 
+        // Prevent unhandled stream error/EPIPE crashes
+        if (ffmpegProc.stdout) {
+          ffmpegProc.stdout.on('error', () => {});
+        }
+
         // 4. Create Discord Audio Resource
         const resource = createAudioResource(ffmpegProc.stdout, {
           inputType: StreamType.Raw,
@@ -190,11 +201,17 @@ export class YtdlpFFmpegEngine {
       const proc = spawn(this.ytdlpPath, args);
       let stdout = '';
 
+      const timeout = setTimeout(() => {
+        try { proc.kill('SIGKILL'); } catch {}
+        resolve(url);
+      }, 12000);
+
       proc.stdout.on('data', (chunk) => {
         stdout += chunk.toString();
       });
 
       proc.on('close', (code) => {
+        clearTimeout(timeout);
         const streamUrl = stdout.trim().split('\n')[0];
         if (code === 0 && streamUrl) {
           resolve(streamUrl);
@@ -205,6 +222,7 @@ export class YtdlpFFmpegEngine {
       });
 
       proc.on('error', () => {
+        clearTimeout(timeout);
         resolve(url);
       });
     });
