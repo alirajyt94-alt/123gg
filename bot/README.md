@@ -43,7 +43,7 @@
    Create a `.env` file or edit `src/config.json`:
    ```env
    DISCORD_TOKEN=your_bot_token_here
-   BOT_PREFIX=!
+   BOT_PREFIX=/
    OWNER_IDS=your_discord_user_id
    YTDLP_PATH=yt-dlp
    FFMPEG_PATH=ffmpeg
@@ -60,39 +60,41 @@
 
 ---
 
-## 📜 Commands Reference
+## 📜 Commands Reference (Native `/` Commands)
+
+The bot natively uses `/` as its prefix and seamlessly supports both Discord Slash commands and standard chat commands!
 
 ### 🎵 Music Commands
-- `!play <song or URL>` - Searches via yt-dlp and streams into your voice channel
-- `!pause` - Pauses current playback
-- `!resume` - Resumes paused playback
-- `!skip` - Skips to the next song in the queue
-- `!skipto <number>` - Jumps to a specific position in the queue
-- `!forceskip` - Force skips without vote restrictions
-- `!stop` - Stops playback, clears queue, and disconnects
-- `!queue` - Shows paginated list of queued tracks
-- `!nowplaying` - Displays animated progress bar, duration, volume, and active filter
-- `!volume <0-200>` - Sets playback volume
-- `!loop <off/track/queue>` - Sets repeat mode
-- `!shuffle` - Randomizes track queue
-- `!clearqueue` - Removes all tracks from queue
-- `!seek <seconds or mm:ss>` - Seeks to timestamp via FFmpeg
-- `!forward [seconds]` - Fast-forwards audio by 10s or custom seconds
-- `!rewind [seconds]` - Rewinds audio by 10s or custom seconds
-- `!previous` - Plays the previously played track from history
-- `!replay` - Restarts the current track from beginning
-- `!search <query>` - Interactive top 5 search picker
-- `!autoplay` - Automatically queues similar songs when queue ends
-- `!speed <0.5 - 2.0>` - Dynamically adjusts audio tempo via FFmpeg `atempo`
-- `!mood <chill/lofi/gaming/workout/party>` - Streams themed mood radio
-- `!artistradio <artist>` - Curates hits radio for any artist
-- `!similar` - Queues similar tracks using yt-dlp recommendations
-- `!join` - Summons the bot to your voice channel
-- `!leave` - Disconnects the bot from voice
-- `!grab` - DMs you song details
-- `!lyrics [song name]` - Fetches and displays plain or synced lyrics for currently playing or searched track with interactive pagination buttons (powered by LRCLIB and yt-dlp metadata)
+- `/play <song or URL>` - Searches via yt-dlp and streams into your voice channel
+- `/pause` - Pauses current playback
+- `/resume` - Resumes paused playback
+- `/skip` - Skips to the next song in the queue
+- `/skipto <number>` - Jumps to a specific position in the queue
+- `/forceskip` - Force skips without vote restrictions
+- `/stop` - Stops playback, clears queue, and disconnects
+- `/queue` - Shows paginated list of queued tracks
+- `/nowplaying` - Displays animated progress bar, duration, volume, and active filter
+- `/volume <0-200>` - Sets playback volume
+- `/loop <off/track/queue>` - Sets repeat mode
+- `/shuffle` - Randomizes track queue
+- `/clearqueue` - Removes all tracks from queue
+- `/seek <seconds or mm:ss>` - Seeks to timestamp via FFmpeg
+- `/forward [seconds]` - Fast-forwards audio by 10s or custom seconds
+- `/rewind [seconds]` - Rewinds audio by 10s or custom seconds
+- `/previous` - Plays the previously played track from history
+- `/replay` - Restarts the current track from beginning
+- `/search <query>` - Interactive top 5 search picker
+- `/autoplay` - Automatically queues similar songs when queue ends
+- `/speed <0.5 - 2.0>` - Dynamically adjusts audio tempo via FFmpeg `atempo`
+- `/mood <chill/lofi/gaming/workout/party>` - Streams themed mood radio
+- `/artistradio <artist>` - Curates hits radio for any artist
+- `/similar` - Queues similar tracks using yt-dlp recommendations
+- `/join` - Summons the bot to your voice channel
+- `/leave` - Disconnects the bot from voice
+- `/grab` - DMs you song details
+- `/lyrics [song name]` - Fetches and displays plain or synced lyrics for currently playing or searched track with interactive pagination buttons (powered by LRCLIB and yt-dlp metadata)
 
-### 🎛️ FFmpeg Audio Filters (`!filter <name>`)
+### 🎛️ FFmpeg Audio Filters (`/filter <name>`)
 - `bassboost` / `bassboost_soft` / `bassboost_hard` - Deep bass frequency amplification
 - `nightcore` - 1.25x tempo + pitch elevation
 - `vaporwave` - 0.8x slowed tempo + aesthetic low-pass
@@ -104,10 +106,10 @@
 - `clear` - Resets all filters back to crystal-clear default audio
 
 ### ⚙️ Config & Utility
-- `!247` - Keeps the bot permanently inside voice channel
-- `!setprefix <prefix>` - Sets custom server prefix
-- `!source` - Displays yt-dlp & FFmpeg audio engine information
-- `!system` / `!node` - Displays CPU, RAM, yt-dlp version, FFmpeg version, active voice streams
-- `!ping` - Shows WebSocket and audio latency
-- `!help` - Interactive command browser
-- `!stats` - Guild count, member count, uptime stats
+- `/247` - Keeps the bot permanently inside voice channel
+- `/setprefix <prefix>` - Sets custom server prefix
+- `/source` - Displays yt-dlp & FFmpeg audio engine information
+- `/system` / `/node` - Displays CPU, RAM, yt-dlp version, FFmpeg version, active voice streams
+- `/ping` - Shows WebSocket and audio latency
+- `/help` - Interactive command browser
+- `/stats` - Guild count, member count, uptime stats

@@ -30,7 +30,7 @@ export class MusicClient extends Client {
     });
 
     this.config = config;
-    this.prefix = config.prefix || '!';
+    this.prefix = config.prefix || '/';
     this.commands = new Collection();
     this.aliases = new Collection();
     this.cooldowns = new Collection();

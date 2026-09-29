@@ -2,7 +2,7 @@ export default {
   name: 'help',
   aliases: ['h', 'commands'],
   description: 'List all available bot commands and features',
-  usage: '!help [command]',
+  usage: '/help [command]',
   category: 'Information',
   async run(client, message, args) {
     if (args[0]) {

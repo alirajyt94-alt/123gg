@@ -1,5 +1,5 @@
 {
-  "prefix": "!",
+  "prefix": "/",
   "token": "YOUR_DISCORD_BOT_TOKEN_HERE",
   "ownerIds": ["123456789012345678"],
   "clientId": "YOUR_CLIENT_ID",

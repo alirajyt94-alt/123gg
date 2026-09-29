@@ -279,7 +279,7 @@ app.post('/api/bot/stop', async (req: Request, res: Response) => {
 
 // In-memory bot configuration & guild defaults
 let botConfig = {
-  prefix: process.env.BOT_PREFIX || '!',
+  prefix: process.env.BOT_PREFIX || '/',
   defaultVolume: 80,
   defaultFilter: 'clear',
   defaultSpeed: 1.0,
@@ -447,10 +447,10 @@ app.post('/api/console/execute', async (req: Request, res: Response) => {
       '  bot status                     Show current Discord connection & guilds',
       '  bot start                      Launch Discord bot instance',
       '  bot stop                       Gracefully stop Discord bot instance',
-      '  !play <query>                  Simulate music playback search',
-      '  !lyrics <song>                 Fetch lyrics via LRCLIB & yt-dlp metadata',
-      '  !filter <name>                 Test FFmpeg audio DSP filter',
-      '  !queue                         Show mock/active queue state',
+      '  /play <query>                  Simulate music playback search',
+      '  /lyrics <song>                 Fetch lyrics via LRCLIB & yt-dlp metadata',
+      '  /filter <name>                 Test FFmpeg audio DSP filter',
+      '  /queue                         Show mock/active queue state',
       '',
       '💻 SYSTEM & RUNTIME COMMANDS:',
       '  node -v / npm -v               Display Node.js & NPM versions',

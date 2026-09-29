@@ -191,7 +191,7 @@ export default function App() {
   const [status, setStatus] = useState<EngineStatus | null>(null);
   const [logs, setLogs] = useState<BotLog[]>([]);
   const [botToken, setBotToken] = useState('');
-  const [botPrefix, setBotPrefix] = useState('!');
+  const [botPrefix, setBotPrefix] = useState('/');
   const [isBotStarting, setIsBotStarting] = useState(false);
 
   // Studio / Player State
@@ -279,13 +279,13 @@ export default function App() {
   const [copiedCode, setCopiedCode] = useState(false);
 
   // Command Simulator State
-  const [simCommand, setSimCommand] = useState('!play blinding lights');
+  const [simCommand, setSimCommand] = useState('/play blinding lights');
   const [simOutput, setSimOutput] = useState<any>(null);
   const [commandsTabMode, setCommandsTabMode] = useState<'terminal' | 'packages' | 'simulator'>('terminal');
 
   // Bot & Guild Config State
   const [botConfig, setBotConfig] = useState<BotConfig>({
-    prefix: '!',
+    prefix: '/',
     defaultVolume: 80,
     defaultFilter: 'clear',
     defaultSpeed: 1.0,
@@ -989,11 +989,12 @@ export default function App() {
   // Command Simulator Handler
   const handleSimulate = () => {
     const input = simCommand.trim();
-    if (input.startsWith('!play')) {
-      const q = input.replace('!play', '').trim() || 'Starboy';
+    const clean = input.replace(/^[/!]/, '').trim();
+    if (clean.startsWith('play')) {
+      const q = clean.replace(/^play/, '').trim() || 'Starboy';
       setSimOutput({
         type: 'embed',
-        title: '🎵 Now Playing (yt-dlp + FFmpeg)',
+        title: '🎵 Now Playing (/play)',
         color: '#6366f1',
         fields: [
           { name: 'Track', value: `**${q.toUpperCase()}**` },
@@ -1003,33 +1004,33 @@ export default function App() {
           { name: 'Active Filter', value: `\`${selectedFilter}\`` }
         ]
       });
-    } else if (input.startsWith('!filter')) {
-      const f = input.replace('!filter', '').trim() || 'bassboost';
+    } else if (clean.startsWith('filter')) {
+      const f = clean.replace(/^filter/, '').trim() || 'bassboost';
       setSimOutput({
         type: 'embed',
-        title: '🎛️ FFmpeg Audio Filter Applied',
+        title: '🎛️ Audio Filter Applied (/filter)',
         color: '#10b981',
         description: `Applied **${f.toUpperCase()}** directly to audio stream via FFmpeg \`-af\` pipeline with 0ms interruption.`
       });
-    } else if (input.startsWith('!queue')) {
+    } else if (clean.startsWith('queue')) {
       setSimOutput({
         type: 'embed',
-        title: '📜 Server Queue (yt-dlp)',
+        title: '📜 Server Queue (/queue)',
         color: '#6366f1',
         description: '1. Blinding Lights - `03:20`\n2. Save Your Tears - `03:35`\n3. After Hours - `06:01`\n\n*Total duration: 12m 56s*'
       });
-    } else if (input.startsWith('!system') || input.startsWith('!node')) {
+    } else if (clean.startsWith('system') || clean.startsWith('node')) {
       setSimOutput({
         type: 'embed',
-        title: '🚀 Groove Music Audio Engine (Lavalink Removed)',
+        title: '🚀 Groove Music Audio Engine (/system)',
         color: '#8b5cf6',
-        description: '**Zero Lavalink Architecture**\n- Extractor: yt-dlp v2026.08.19\n- DSP: FFmpeg v4.4.2\n- Transport: @discordjs/voice (Direct UDP Opus)\n- Latency: 18ms'
+        description: '**Native Engine Active**\n- Extractor: yt-dlp v2026.08.19\n- DSP: FFmpeg v7.0.2-static\n- Transport: @discordjs/voice (Direct UDP Opus)\n- Latency: 18ms\n- Default Prefix: `/` (Slash & text command support)'
       });
-    } else if (input.startsWith('!lyrics') || input.startsWith('!ly')) {
-      const q = input.replace(/^!(lyrics|ly)/, '').trim() || (currentTrack ? currentTrack.title : 'Blinding Lights');
+    } else if (clean.startsWith('lyrics') || clean.startsWith('ly')) {
+      const q = clean.replace(/^(lyrics|ly)/, '').trim() || (currentTrack ? currentTrack.title : 'Blinding Lights');
       setSimOutput({
         type: 'embed',
-        title: `📝 Lyrics: ${q} - The Weeknd`,
+        title: `📝 Lyrics: ${q} - The Weeknd (/lyrics)`,
         color: '#6366f1',
         description: `Yeah\n\nI've been tryna call\nI've been on my own for long enough\nMaybe you can show me how to love, maybe\n\nI'm going through withdrawals\nYou don't even have to do too much\nYou can turn me on with just a touch, baby\n\nI look around and Sin City's cold and empty\nNo one's around to judge me\nI can't see clearly when you're gone...`,
         fields: [
@@ -1069,25 +1070,23 @@ export default function App() {
       {/* Responsive & Mobile-Optimized Application Shell */}
       <div className={`w-full ${viewMode === 'mobile' ? 'max-w-md mx-auto sm:border-x sm:border-slate-800/60 sm:shadow-2xl sm:shadow-black' : 'max-w-7xl mx-auto px-2 sm:px-4 lg:px-6'} min-h-[100dvh] bg-slate-950 flex flex-col relative`}>
 
-        {/* Responsive / Mobile Top App Bar */}
-        <header className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-xl border-b border-slate-800/80 px-3.5 py-2.5 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-md shadow-indigo-500/25">
+        {/* Clean Responsive / Mobile Top App Bar */}
+        <header className="sticky top-0 z-30 bg-slate-950/90 backdrop-blur-xl border-b border-slate-800/60 px-4 py-2.5 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-md shadow-indigo-500/20 shrink-0">
               <Disc className={`w-4 h-4 text-white ${isPlaying ? 'animate-spin-slow' : ''}`} />
             </div>
             <div>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2">
                 <span className="text-sm font-bold text-white tracking-tight">Groove Music</span>
-                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-semibold border ${
-                  status?.bot.online
-                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                    : 'bg-slate-800/80 text-slate-400 border-slate-700/60'
-                }`}>
+                <span className="text-xs text-slate-400 flex items-center gap-1.5">
                   <span className={`w-1.5 h-1.5 rounded-full ${status?.bot.online ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
                   {status?.bot.online ? 'Online' : 'Standby'}
                 </span>
+                <span className="text-slate-600 text-xs">·</span>
+                <span className="text-xs text-indigo-300/90 font-mono">prefix: <strong className="text-indigo-400 font-bold">/</strong></span>
               </div>
-              <p className="text-[10px] text-slate-400 font-mono">yt-dlp & FFmpeg Native Audio</p>
+              <p className="text-[10px] text-slate-400 hidden sm:block">yt-dlp & FFmpeg Native Audio · Direct Voice Stream</p>
             </div>
           </div>
 
@@ -1314,12 +1313,20 @@ export default function App() {
 
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="text-xs font-medium text-slate-300 block mb-1">Prefix</label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-medium text-slate-300">Prefix</label>
+                        <span className="text-[10px] text-indigo-400 font-mono">Slash + Text</span>
+                      </div>
                       <input
                         type="text"
                         value={botPrefix}
-                        onChange={(e) => setBotPrefix(e.target.value)}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setBotPrefix(val);
+                          setBotConfig(prev => ({ ...prev, prefix: val }));
+                        }}
                         className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500"
+                        placeholder="/"
                       />
                     </div>
                     <div>
@@ -1624,7 +1631,7 @@ export default function App() {
                             <option value={66}>66% of Voice Members</option>
                             <option value={75}>75% of Voice Members</option>
                           </select>
-                          <div className="text-[11px] text-slate-500">Percentage required to pass !skip command.</div>
+                          <div className="text-[11px] text-slate-500">Percentage required to pass /skip command.</div>
                         </div>
 
                         <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-950/60 border border-slate-850">
@@ -1664,6 +1671,41 @@ export default function App() {
                                 title={c.label}
                               />
                             ))}
+                          </div>
+                        </div>
+
+                        <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-850 space-y-2 md:col-span-2">
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium text-slate-200">Server Command Prefix</span>
+                            <span className="font-mono text-xs px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-bold">
+                              {botConfig.prefix || '/'}
+                            </span>
+                          </div>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={botConfig.prefix}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setBotConfig({ ...botConfig, prefix: val });
+                                setBotPrefix(val);
+                              }}
+                              placeholder="/"
+                              className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs font-mono text-indigo-300 focus:outline-none focus:border-indigo-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setBotConfig({ ...botConfig, prefix: '/' });
+                                setBotPrefix('/');
+                              }}
+                              className="px-3 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-mono transition-all"
+                            >
+                              Reset to /
+                            </button>
+                          </div>
+                          <div className="text-[11px] text-slate-400">
+                            Configured default is <strong className="text-indigo-300">/</strong> for Discord Slash Commands and text chat commands.
                           </div>
                         </div>
                       </div>
@@ -1761,7 +1803,7 @@ export default function App() {
                     <div className="p-4 rounded-xl bg-slate-950/50 border border-dashed border-slate-800 text-center text-xs text-slate-400 space-y-1">
                       <div className="font-semibold text-slate-300">No active Discord voice connections</div>
                       <div className="text-slate-500 text-[11px]">
-                        When your bot is online, join any Discord voice channel and type <code className="text-indigo-400 font-mono">!play &lt;song&gt;</code> or <code className="text-indigo-400 font-mono">!join</code> to stream audio!
+                        When your bot is online, join any Discord voice channel and type <code className="text-indigo-400 font-mono">/play &lt;song&gt;</code> or <code className="text-indigo-400 font-mono">/join</code> to stream audio!
                       </div>
                     </div>
                   ) : (
@@ -3336,7 +3378,7 @@ export default function App() {
                       type="text"
                       value={simCommand}
                       onChange={(e) => setSimCommand(e.target.value)}
-                      placeholder="e.g. !play blinding lights or !filter nightcore or !queue"
+                      placeholder="e.g. /play blinding lights or /filter nightcore or /queue"
                       className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs font-mono text-indigo-300 focus:outline-none focus:border-indigo-500"
                     />
                     <button
@@ -3347,21 +3389,21 @@ export default function App() {
                     </button>
                   </div>
 
-                  {/* Quick Command Pills */}
+                  {/* Quick Command Buttons */}
                   <div className="flex flex-wrap gap-1.5 text-xs">
                     <span className="text-slate-500 self-center mr-1">Quick Run:</span>
                     {[
-                      '!play starboy',
-                      '!lyrics',
-                      '!lyrics bohemian rhapsody',
-                      '!filter nightcore',
-                      '!filter bassboost',
-                      '!queue',
-                      '!nowplaying',
-                      '!speed 1.5',
-                      '!volume 100',
-                      '!system',
-                      '!help'
+                      '/play starboy',
+                      '/lyrics',
+                      '/lyrics bohemian rhapsody',
+                      '/filter nightcore',
+                      '/filter bassboost',
+                      '/queue',
+                      '/nowplaying',
+                      '/speed 1.5',
+                      '/volume 100',
+                      '/system',
+                      '/help'
                     ].map((cmd) => (
                       <button
                         key={cmd}
@@ -3417,28 +3459,28 @@ export default function App() {
                   <Music className="w-4 h-4" /> Music Commands (30)
                 </h4>
                 <div className="space-y-2 text-xs">
-                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
-                    <span className="font-mono text-indigo-300 font-semibold">!play &lt;query&gt;</span>
+                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-indigo-300 font-semibold">/play &lt;query&gt;</span>
                     <p className="text-slate-400 text-[11px] mt-0.5">Stream track or playlist using yt-dlp & FFmpeg</p>
                   </div>
-                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
-                    <span className="font-mono text-indigo-300 font-semibold">!pause / !resume</span>
+                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-indigo-300 font-semibold">/pause / /resume</span>
                     <p className="text-slate-400 text-[11px] mt-0.5">Toggle playback state with 0 frame drops</p>
                   </div>
-                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
-                    <span className="font-mono text-indigo-300 font-semibold">!skip / !skipto &lt;#&gt;</span>
+                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-indigo-300 font-semibold">/skip / /skipto &lt;#&gt;</span>
                     <p className="text-slate-400 text-[11px] mt-0.5">Skip to next song or jump in queue</p>
                   </div>
-                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
-                    <span className="font-mono text-indigo-300 font-semibold">!seek &lt;mm:ss&gt;</span>
+                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-indigo-300 font-semibold">/seek &lt;mm:ss&gt;</span>
                     <p className="text-slate-400 text-[11px] mt-0.5">Accurate timestamp seeking via FFmpeg -ss</p>
                   </div>
-                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
-                    <span className="font-mono text-indigo-300 font-semibold">!speed &lt;0.5-2.0&gt;</span>
+                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-indigo-300 font-semibold">/speed &lt;0.5-2.0&gt;</span>
                     <p className="text-slate-400 text-[11px] mt-0.5">Dynamic tempo adjustment via FFmpeg atempo</p>
                   </div>
-                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
-                    <span className="font-mono text-indigo-300 font-semibold">!autoplay</span>
+                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-indigo-300 font-semibold">/autoplay</span>
                     <p className="text-slate-400 text-[11px] mt-0.5">Endless similar songs recommendation algorithm</p>
                   </div>
                 </div>
@@ -3450,24 +3492,24 @@ export default function App() {
                   <Sliders className="w-4 h-4" /> FFmpeg Filter Commands (9)
                 </h4>
                 <div className="space-y-2 text-xs">
-                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
-                    <span className="font-mono text-violet-300 font-semibold">!filter bassboost</span>
+                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-violet-300 font-semibold">/filter bassboost</span>
                     <p className="text-slate-400 text-[11px] mt-0.5">Heavy low-frequency gain enhancement</p>
                   </div>
-                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
-                    <span className="font-mono text-violet-300 font-semibold">!filter nightcore</span>
+                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-violet-300 font-semibold">/filter nightcore</span>
                     <p className="text-slate-400 text-[11px] mt-0.5">High tempo + pitch shift aesthetic</p>
                   </div>
-                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
-                    <span className="font-mono text-violet-300 font-semibold">!filter vaporwave</span>
+                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-violet-300 font-semibold">/filter vaporwave</span>
                     <p className="text-slate-400 text-[11px] mt-0.5">Slowed + reverb retro aesthetic</p>
                   </div>
-                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
-                    <span className="font-mono text-violet-300 font-semibold">!filter 8d</span>
+                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-violet-300 font-semibold">/filter 8d</span>
                     <p className="text-slate-400 text-[11px] mt-0.5">Spatial binaural rotating surround audio</p>
                   </div>
-                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
-                    <span className="font-mono text-violet-300 font-semibold">!filter clear</span>
+                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-violet-300 font-semibold">/filter clear</span>
                     <p className="text-slate-400 text-[11px] mt-0.5">Resets all FFmpeg filters back to standard</p>
                   </div>
                 </div>
@@ -3479,20 +3521,20 @@ export default function App() {
                   <Server className="w-4 h-4" /> Config & Engine Commands
                 </h4>
                 <div className="space-y-2 text-xs">
-                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
-                    <span className="font-mono text-emerald-300 font-semibold">!247</span>
+                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-emerald-300 font-semibold">/247</span>
                     <p className="text-slate-400 text-[11px] mt-0.5">Keep bot in voice channel 24/7 without leaving</p>
                   </div>
-                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
-                    <span className="font-mono text-emerald-300 font-semibold">!system (or !node)</span>
+                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-emerald-300 font-semibold">/system (or /node)</span>
                     <p className="text-slate-400 text-[11px] mt-0.5">Host CPU, RAM, yt-dlp version, and FFmpeg stats</p>
                   </div>
-                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
-                    <span className="font-mono text-emerald-300 font-semibold">!setprefix &lt;prefix&gt;</span>
-                    <p className="text-slate-400 text-[11px] mt-0.5">Change bot prefix for your server</p>
+                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-emerald-300 font-semibold">/setprefix &lt;prefix&gt;</span>
+                    <p className="text-slate-400 text-[11px] mt-0.5">Change bot prefix for your server (default: /)</p>
                   </div>
-                  <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800/80">
-                    <span className="font-mono text-emerald-300 font-semibold">!source</span>
+                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                    <span className="font-mono text-emerald-300 font-semibold">/source</span>
                     <p className="text-slate-400 text-[11px] mt-0.5">Displays yt-dlp & FFmpeg audio engine information</p>
                   </div>
                 </div>
@@ -3705,7 +3747,7 @@ pm2 start "bash scripts/setup-dependencies.sh && npm start" --name groove-music`
               </p>
               <pre className="bg-slate-950 p-3 rounded-xl border border-slate-800 font-mono text-emerald-400 text-xs overflow-x-auto">
 {`DISCORD_TOKEN=MTAyNDM...YOUR_TOKEN_HERE
-BOT_PREFIX=!
+BOT_PREFIX=/
 OWNER_IDS=123456789012345678
 YTDLP_PATH=yt-dlp
 FFMPEG_PATH=ffmpeg`}

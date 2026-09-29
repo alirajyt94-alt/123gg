@@ -4,7 +4,7 @@ export default {
   name: 'setprefix',
   aliases: ['prefix'],
   description: 'Change the bot command prefix for this server',
-  usage: '!setprefix <new prefix>',
+  usage: '/setprefix <new prefix>',
   category: 'Config',
   async run(client, message, args) {
     if (!message.member.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
