@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
+import { Events } from 'discord.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -17,14 +18,19 @@ export async function loadClients(client) {
       const module = await import(fileUrl);
       const event = module.default || module;
 
-      const eventName = file.split('.')[0];
+      let eventName = file.split('.')[0];
+      if (eventName === 'ready') {
+        eventName = Events?.ClientReady || 'clientReady';
+      }
+
       if (typeof event === 'function') {
         client.on(eventName, event.bind(null, client));
       } else if (event.name && typeof event.run === 'function') {
+        const targetName = event.name === 'ready' ? (Events?.ClientReady || 'clientReady') : event.name;
         if (event.once) {
-          client.once(event.name, (...args) => event.run(client, ...args));
+          client.once(targetName, (...args) => event.run(client, ...args));
         } else {
-          client.on(event.name, (...args) => event.run(client, ...args));
+          client.on(targetName, (...args) => event.run(client, ...args));
         }
       }
     } catch (err) {
